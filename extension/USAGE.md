@@ -117,6 +117,8 @@
 - ปัญหาการดึงรูป/แปล → `chrome://extensions` → Manga Translator → **service worker** (`[mt:sw]`, `[mt:pipeline]`)
 - ปัญหาการตรวจจับ/โมเดล → `chrome://extensions` → **offscreen.html** (`[mt:offscreen]`, `[mt:detector]`)
 
+ถ้าใช้ Edge เปลี่ยน `chrome://extensions` เป็น `edge://extensions` ที่เหลือเหมือนกันทุกอย่าง
+
 ---
 
 ## ตัวเลขที่วัดได้จริง (RTX 3060 Laptop)
