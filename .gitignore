@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+.output/
+.wxt/
+*.zip
+*.crx
+*.pem
+
+# ML models & runtime (downloaded on demand / too large for git)
+models/
+*.onnx
+*.onnx_data
+*.pt
+*.safetensors
+*.wasm
+
+spike/public/models/
+
+# Benchmark fixtures (copyrighted manga pages — never commit)
+fixtures/pages/
+spike/samples/
+spike/groundtruth.json
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs & caches
+*.log
+npm-debug.log*
+.eslintcache
+coverage/
+.vitest/
+
+# Python sidecar (optional local-services)
+__pycache__/
+*.py[cod]
+.venv/
+venv/

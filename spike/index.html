@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M0 — OCR Benchmark Harness</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>M0 — OCR Benchmark Harness</h1>
+      <p class="sub">
+        ลากรูปมังงะมาวาง (หรือกดเลือกไฟล์) เพื่อวัดเวลาแต่ละ stage
+        · <strong>ยังไม่ใช่ extension</strong>
+      </p>
+    </header>
+
+    <section class="controls">
+      <label>
+        ภาษาต้นทาง
+        <select id="lang">
+          <option value="ja" selected>日本語 (ja)</option>
+          <option value="en">English (en)</option>
+        </select>
+      </label>
+
+      <label>
+        Preset
+        <select id="preset">
+          <option value="fast">fast — det 1024</option>
+          <option value="balanced" selected>balanced — det 1600</option>
+          <option value="quality">quality — det 2048</option>
+        </select>
+      </label>
+
+      <label>
+        Detector
+        <select id="detector">
+          <option value="ppocr" selected>PP-OCRv4 det (ของจริง)</option>
+          <option value="mock">mock (ไม่ต้องมีโมเดล)</option>
+        </select>
+      </label>
+
+      <label>
+        Backend
+        <select id="backend">
+          <option value="auto" selected>auto (WebGPU → WASM)</option>
+          <option value="webgpu">webgpu</option>
+          <option value="wasm">wasm</option>
+        </select>
+      </label>
+
+      <label>
+        Recognizer
+        <select id="recognizer">
+          <option value="gemini" selected>Gemini vision (อ่าน+แปล · ไม่ต้อง OCR)</option>
+          <option value="mangaocr-gemini">manga-ocr + Gemini text (token ต่ำ · ช้า)</option>
+          <option value="mangaocr">manga-ocr อย่างเดียว (ไม่แปล)</option>
+          <option value="mock">mock (ไม่ต้องมีโมเดล)</option>
+        </select>
+      </label>
+
+      <label>
+        Gemini API key
+        <input type="password" id="api-key" placeholder="วางคีย์ของคุณ" size="26" />
+      </label>
+
+      <label class="file">
+        <input type="file" id="file" accept="image/*" multiple />
+      </label>
+
+      <label class="check">
+        <input type="checkbox" id="boxes-only" />
+        กรอบอย่างเดียว (ซ่อนคำแปล)
+      </label>
+
+      <button id="run-samples" type="button">รันทุกไฟล์ใน samples/</button>
+      <button id="export-png" type="button">ดาวน์โหลด PNG ทั้งหมด</button>
+    </section>
+
+    <section class="controls history">
+      <label>
+        ผลที่บันทึกไว้
+        <select id="history"></select>
+      </label>
+      <button id="load-run" type="button">แสดงผลนี้</button>
+      <button id="export-run" type="button">ดาวน์โหลด JSON</button>
+      <button id="clear-runs" type="button" class="danger">ล้างประวัติ</button>
+      <span id="history-note" class="hint"></span>
+    </section>
+
+    <div id="drop" class="drop">
+      <p>ลากไฟล์รูปมาวางตรงนี้</p>
+      <p class="hint">รองรับหลายไฟล์พร้อมกัน — จะรันเรียงทีละไฟล์แล้วสรุปค่าเฉลี่ยให้</p>
+    </div>
+
+    <div id="warning" class="warning" hidden></div>
+
+    <main class="results" id="results"></main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
