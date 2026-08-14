@@ -110,32 +110,21 @@ export type Request =
   | { t: 'CACHE_STATS' }
   | { t: 'CACHE_CLEAR'; which: 'all' | 'ocr' | 'translation' }
   /** Popup asks the active tab to translate whatever is on screen. */
-  | { t: 'TRANSLATE_VISIBLE'; tabId: number }
-  | { t: 'TAB_STATUS'; tabId: number };
+  | { t: 'TRANSLATE_VISIBLE'; tabId: number };
 
 export type Response =
   | { ok: true; pong: true }
   | { ok: true; lines: DiagnosticLine[] }
   | { ok: true; stats: CacheStats }
-  | { ok: true; status: TabStatus }
   | { ok: true }
   | { ok: false; code: ErrCode; message: string; hint: string };
-
-export interface TabStatus {
-  images: number;
-  translated: number;
-  queued: number;
-  running: boolean;
-  profileId: string;
-}
 
 /* ---------- service worker -> content script (sendMessage) ---------- */
 
 export type SwToTab =
   | { t: 'CONTEXT_TRANSLATE'; srcUrl: string | undefined }
   | { t: 'TRANSLATE_VISIBLE' }
-  | { t: 'SETTINGS_CHANGED' }
-  | { t: 'TAB_STATUS_REQUEST' };
+  | { t: 'SETTINGS_CHANGED' };
 
 /* ---------- service worker <-> offscreen document ---------- */
 

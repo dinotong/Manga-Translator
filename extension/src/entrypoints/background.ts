@@ -200,7 +200,14 @@ async function handleRequest(req: Request): Promise<Response> {
       return { ok: true };
 
     default:
-      return { ok: false, code: 'UNKNOWN', message: `unknown request ${String(req?.t)}`, hint: '' };
+      // Unreachable for a well-typed sender, but a page from an older build
+      // still talking to a newer worker is not well-typed.
+      return {
+        ok: false,
+        code: 'UNKNOWN',
+        message: `unknown request ${String((req as { t?: string } | undefined)?.t)}`,
+        hint: '',
+      };
   }
 }
 
