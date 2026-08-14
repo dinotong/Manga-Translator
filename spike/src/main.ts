@@ -236,14 +236,24 @@ els.file.addEventListener('change', () => {
   void processFiles([...(els.file.files ?? [])]);
 });
 
-/** Pull the whole fixture set from the dev server so a benchmark run is one click. */
+/**
+ * Pull the whole fixture set from the dev server so a benchmark run is one click.
+ *
+ * samples/ is served by a dev-only middleware, so in a built copy this endpoint
+ * does not exist — and a static host answers an unknown path with index.html
+ * and a 200 rather than a 404. Checking the shape of the reply rather than its
+ * status is what turns that into "there are no samples here" instead of a JSON
+ * parse error the reader has no way to interpret.
+ */
 async function loadSamples(): Promise<File[]> {
   const res = await fetch('/samples/index.json');
-  if (!res.ok) throw new Error('samples/ ว่างหรือเข้าไม่ถึง');
-  const names: string[] = await res.json();
+  const names: unknown = res.ok ? await res.json().catch(() => null) : null;
+  if (!Array.isArray(names)) {
+    throw new Error('ไม่มี samples/ ในเวอร์ชันนี้ — มีเฉพาะตอนรัน dev server · ลากไฟล์มาวางแทนได้');
+  }
 
   return Promise.all(
-    names.map(async (name) => {
+    names.filter((n): n is string => typeof n === 'string').map(async (name) => {
       const blob = await (await fetch(`/samples/${encodeURIComponent(name)}`)).blob();
       return new File([blob], name, { type: blob.type });
     }),
