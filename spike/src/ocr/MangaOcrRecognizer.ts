@@ -18,9 +18,21 @@ import type { TextRecognizer } from './types';
  *    so the ink-ratio and degenerate-output guards in pipeline.ts are load
  *    bearing, not defensive extras.
  *
- * Model choice: ms57rd/manga-ocr-base-ONNX. The onnx-community mirror looks
- * better stocked but ships no tokenizer.json, so its token ids can never be
- * decoded back into text.
+ * Model choice: ms57rd/manga-ocr-base-ONNX, and 🔴 that export is broken. See
+ * DECISIONS D-012. Two defects, both proven against a synthetic fixture that
+ * simply says こんにちは in 64px serif on white:
+ *
+ *  1. Its tokenizer.json carries five tokens instead of 6144, so every id came
+ *     back as [UNK] and every bubble as an empty string. download-models.mjs
+ *     now grafts the real vocabulary on from kha-white's original repo.
+ *  2. With the vocabulary fixed the model emits fluent-looking Japanese that
+ *     has nothing to do with the image, identically at fp32 and int8. Its
+ *     "decoder_model_merged" declares no past_key_values inputs at all, so the
+ *     name is a lie and the generation loop cannot be running as intended.
+ *
+ * Defect 2 is not ours to fix from here — it needs a fresh ONNX export from
+ * kha-white/manga-ocr-base. Kept wired up because the interface, the ink guards
+ * and the timings around it are all still what a Local Service will need.
  */
 
 export type OcrDevice = 'webgpu' | 'wasm';
@@ -110,17 +122,57 @@ export class MangaOcrRecognizer implements TextRecognizer {
       // Greedy. Sampling would make repeat runs unreproducible, and a benchmark
       // whose numbers move between runs is not a benchmark.
       do_sample: false,
+      // generation_config.json asks for 4 beams. do_sample:false alone does not
+      // switch that off, and transformers.js has no beam search, so state the
+      // greedy intent instead of relying on what it does with a request it
+      // cannot honour.
+      num_beams: 1,
     });
 
-    const first = Array.isArray(output) ? output[0] : output;
-    const text = (first as { generated_text?: string } | undefined)?.generated_text ?? '';
-    return text.trim();
+    const text = firstGeneratedText(output);
+    if (!text) {
+      // Empty output and a hallucinated sentence cost the same 5 seconds, and
+      // from the pipeline's side both just look like "this block vanished".
+      // Print the shape so the next person can tell an unreadable crop from a
+      // result we failed to unwrap.
+      console.warn(`[${this.id}] empty result`, {
+        crop: `${crop.width}x${crop.height}`,
+        shape: describe(output),
+      });
+    }
+    return text;
   }
 
   dispose(): void {
     void this.pipe?.dispose();
     this.pipe = null;
   }
+}
+
+/**
+ * Pull the generated string out of whatever shape the pipeline returned.
+ *
+ * transformers.js wraps image-to-text results in one array per input image and
+ * another per returned sequence, and whether it unwraps the outer one depends
+ * on how it decided the input was batched. Reading `output[0].generated_text`
+ * therefore works or silently yields undefined depending on the version — and
+ * the failure looks exactly like a bubble the model could not read, five
+ * seconds of work discarded without a word. Flattening is cheaper than pinning.
+ */
+function firstGeneratedText(output: unknown): string {
+  let node: unknown = output;
+  for (let depth = 0; Array.isArray(node) && depth < 4; depth++) node = node[0];
+  const text = (node as { generated_text?: unknown } | null)?.generated_text;
+  return typeof text === 'string' ? text.trim() : '';
+}
+
+/** Shape of a value, without its contents — for logs that must not leak page text. */
+function describe(value: unknown, depth = 0): string {
+  if (Array.isArray(value)) {
+    return depth > 3 ? 'array' : `array(${value.length})[${describe(value[0], depth + 1)}]`;
+  }
+  if (value && typeof value === 'object') return `{${Object.keys(value).join(',')}}`;
+  return typeof value;
 }
 
 /** ImageBitmap -> RawImage, which is what transformers.js preprocessors accept. */

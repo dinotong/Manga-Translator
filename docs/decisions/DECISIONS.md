@@ -8,6 +8,58 @@
 
 ---
 
+## D-013 · ONNX session รัน 2 งานพร้อมกันไม่ได้ — `Session already started`
+**2026-08-15 · เจอตอนวัด `PpOcrDetector`**
+
+เรียก `detect()` ซ้อนกัน 2 ครั้งบน session เดียว → ORT โยน `Error: Session already started` (ไม่ใช่รอคิวให้)
+
+**ทำไมเขียนไว้:** ตอน M4 extension จะมี IntersectionObserver + prefetch ยิงงานเข้ามาพร้อมกันหลายรูปแน่ๆ ถ้าไม่มีคิวจะเจอ error นี้แบบสุ่ม แล้วดีบั๊กยากมากเพราะขึ้นกับจังหวะ scroll — **offscreen document ต้องมี job queue ที่รันทีละงาน** ไม่ใช่ยิงตรง
+
+(เสียเวลาไป ~20 นาทีเพราะตอนแรกนึกว่า detector ให้ผลไม่คงที่ ที่จริงคือ loop วัด 2 อันรันทับกัน)
+
+**ย้อนกลับ:** ไม่ใช่การตัดสินใจ เป็นข้อจำกัดของ ORT
+
+---
+
+## D-012 · 🔴 manga-ocr ที่ 0 block — **ONNX export ที่ใช้อยู่พัง 2 ชั้น**
+**2026-08-15 · `spike/scripts/download-models.mjs` · `spike/src/ocr/MangaOcrRecognizer.ts`**
+
+ไล่จนเจอต้นเหตุจริงแล้ว ไม่ใช่ pipeline ไม่ใช่ crop ไม่ใช่ detector
+
+พิสูจน์ด้วย **fixture สังเคราะห์**: วาดคำว่า `こんにちは` ด้วย serif 64px บนพื้นขาว แล้วป้อนให้ manga-ocr ตรงๆ (ตัด detector/crop ออกจากสมการทั้งหมด)
+
+**ชั้นที่ 1 — tokenizer.json เป็นของปลอม (แก้แล้ว ✅)**
+`ms57rd/manga-ocr-base-ONNX` ส่ง `tokenizer.json` ขนาด 2.7 KB ที่มี vocab แค่ **5 token** (`[PAD] [UNK] [CLS] [SEP] [MASK]`) ทั้งที่ decoder ยิง id ในช่วง **6144 ตัวอักษรญี่ปุ่น** → ทุก id กลายเป็น `[UNK]` → `skip_special_tokens` ตัด `[UNK]` ทิ้ง → ได้ **สตริงว่าง**
+
+นี่คือคำตอบของ "53 วินาทีแล้วได้ 0 block": โมเดลอ่านเสร็จแล้วแต่ **ถอดรหัสกลับเป็นตัวอักษรไม่ได้** ไม่มี error ไม่มี id เกินขอบเขต หน้าตาเหมือน crop ที่อ่านไม่ออกเป๊ะ — เลยรอดมาได้ทั้ง benchmark
+
+แก้โดยดึง `vocab.txt` (6144 บรรทัด) จาก **kha-white/manga-ocr-base** ต้นฉบับ (Apache-2.0 เหมือนกัน โปรเจกต์เดียวกัน) มาเสียบเข้า tokenizer.json ใน `npm run models` — clone ใหม่ได้ของที่ใช้ได้เลย
+
+**ชั้นที่ 2 — ตัว export เองก็พัง (แก้จากฝั่งเราไม่ได้ ❌)**
+พอ vocab ถูกแล้ว โมเดล**อ่านออกมาเป็นภาษาญี่ปุ่นที่ดูดีแต่ไม่เกี่ยวกับภาพเลย** (`ん 娠 に 斥 候 表…` ทั้งที่ภาพเขียนว่า こんにちは)
+
+ตัดตัวแปรออกทีละอย่างแล้ว:
+- ❌ ไม่ใช่ quantization — โหลด **fp32 (460 MB)** มาลองแล้ว ได้ตัวอักษร**ชุดเดิมเป๊ะ**
+- ❌ ไม่ใช่ backend — wasm กับ webgpu ให้ผลเหมือนกัน
+- ❌ ไม่ใช่ preprocessing — `pixel_values` ออกมา `[1,3,224,224]` ช่วง -1..1 ถูกต้อง
+- ❌ ไม่ใช่ beam search / KV-cache config — ปิดทั้งคู่แล้วไม่เปลี่ยน
+- ✅ **ไฟล์ `decoder_model_merged.onnx` ไม่มี input `past_key_values` สักตัว** ทั้งที่ชื่อบอกว่า merged → ชื่อไฟล์โกหก graph ข้างในไม่ใช่ decoder ที่ transformers.js คิดว่ากำลังคุยด้วย
+
+repo นี้เจอของเสีย **2 อย่างในไฟล์คนละไฟล์** (tokenizer stub + decoder mislabeled) และไม่ระบุ license ด้วยซ้ำ → เชื่อถือไม่ได้
+
+**ทางออกที่ดีที่สุดถ้าจะรื้อฟื้น manga-ocr ในเบราว์เซอร์** (ไม่ได้ทำ เพราะไม่ใช่ทางหลักแล้วตาม D-005):
+1. **export ONNX เอง** จาก `kha-white/manga-ocr-base` ด้วย `optimum-cli` — ได้ของที่ตรงกับ config แน่นอน เป็นทางที่ถูกต้องที่สุด
+2. `ogkalu/manga-ocr-mobile` (Apache-2.0, encoder แค่ 17 MB) — แต่เป็น 3 ไฟล์แยก (`encoder`/`decoder_init`/`decoder_step`) ต้องเขียน generation loop เองด้วย ORT ตรงๆ transformers.js โหลดไม่ได้
+3. Local Service (Python + manga-ocr ตัวจริง) — เลี่ยงปัญหา ONNX ทั้งหมด
+
+**ผลย้อนกลับไปที่ ADR-001:** ตัวเลข **5.27 วิ/bubble วัดตอนที่โมเดลคืนสตริงว่าง** ทิศทางยังถูก (encoder อย่างเดียวก็หลายวินาทีแล้ว และ decode จริงจะช้ากว่านี้อีก) แต่ต้องถือเป็น **ขอบล่าง** ไม่ใช่ตัวเลขสรุป
+
+**ทำอะไรเพิ่ม:** ติดป้าย 🔴 ใน dropdown ทั้ง 2 โหมด เพื่อไม่ให้ใครเผลอเอาไป benchmark ซ้ำ — ตอนนี้มันจะ**เรนเดอร์คำแปลมั่วแทนที่จะเงียบ** ซึ่งอันตรายกว่าตามกฎในโปรเจกต์
+
+**ย้อนกลับ:** vocab fix ไม่ควรย้อน · ป้าย 🔴 เอาออกได้เมื่อมี export ที่ใช้ได้
+
+---
+
 ## D-011 · NMS ทำแล้วแต่**ไม่เคยทำงานเลย**บน fixture ทั้ง 18 หน้า — ยังเก็บไว้
 **2026-08-15 · `spike/src/core/geometry.ts` (`suppressOverlaps`) · `spike/src/ocr/PpOcrDetector.ts`**
 

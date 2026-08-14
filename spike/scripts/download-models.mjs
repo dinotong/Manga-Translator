@@ -51,7 +51,8 @@ const MODELS_INDEX = {
  * env.localModelPath at it.
  *
  * ms57rd rather than the onnx-community mirror: the latter ships no
- * tokenizer.json, which leaves generated token ids permanently undecodable.
+ * tokenizer.json at all. ms57rd ships one, but see fixTokenizerVocab — it is a
+ * stub, and the vocabulary has to come from the original PyTorch repo.
  */
 const MANGA_OCR = {
   repo: 'ms57rd/manga-ocr-base-ONNX',
@@ -66,6 +67,8 @@ const MANGA_OCR = {
     'onnx/encoder_model_quantized.onnx',
     'onnx/decoder_model_merged_quantized.onnx',
   ],
+  /** The real character vocabulary, from kha-white's original (also Apache-2.0). */
+  vocabUrl: 'https://huggingface.co/kha-white/manga-ocr-base/resolve/main/vocab.txt',
 };
 
 async function downloadMangaOcr() {
@@ -90,6 +93,56 @@ async function downloadMangaOcr() {
   }
 
   await fixPreprocessorConfig();
+  await fixTokenizerVocab();
+}
+
+/**
+ * Restore the character vocabulary the ONNX mirror dropped.
+ *
+ * The tokenizer.json in ms57rd/manga-ocr-base-ONNX is a 2.7 KB stub: its
+ * WordPiece vocab contains the five special tokens and nothing else, where the
+ * decoder emits ids across a 6144-token Japanese character vocabulary. Every
+ * real id therefore decodes to [UNK], and since batch_decode is called with
+ * skip_special_tokens, [UNK] is stripped too — the model reads the bubble
+ * correctly and hands back an empty string. Nothing throws, no id is out of
+ * range, and the failure is indistinguishable from an unreadable crop, which is
+ * how it survived a whole benchmark run.
+ *
+ * vocab.txt from kha-white's original repo is the same vocabulary the model was
+ * trained on (same project, also Apache-2.0), one token per line, so the line
+ * number IS the token id.
+ */
+async function fixTokenizerVocab() {
+  const path = join(MODELS, MANGA_OCR.dir, 'tokenizer.json');
+  const tok = JSON.parse(await readFile(path, 'utf8'));
+
+  // A real vocabulary is thousands of entries; the stub has five.
+  if (Object.keys(tok.model?.vocab ?? {}).length > 100) {
+    console.log('    ok    tokenizer vocab already complete');
+    return;
+  }
+
+  process.stdout.write('    fix   tokenizer vocab (stub) ... ');
+  const res = await fetch(MANGA_OCR.vocabUrl, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for vocab.txt`);
+
+  // Trailing newline only — a blank line in the middle would be a real token.
+  const lines = (await res.text()).split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+
+  const vocab = {};
+  lines.forEach((token, id) => {
+    vocab[token] = id;
+  });
+
+  // Sanity: ids the model actually emits must land on the special tokens.
+  if (vocab['[PAD]'] !== 0 || vocab['[CLS]'] !== 2 || vocab['[SEP]'] !== 3) {
+    throw new Error('vocab.txt special tokens are not where the config says they are');
+  }
+
+  tok.model.vocab = vocab;
+  await writeFile(path, `${JSON.stringify(tok)}\n`);
+  console.log(`${lines.length} tokens`);
 }
 
 /**
