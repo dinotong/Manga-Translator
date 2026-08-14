@@ -85,8 +85,14 @@ function Popup() {
             disabled={!settings.enabled}
             onChange={(e) => void patch({ autoTranslate: (e.target as HTMLInputElement).checked })}
           />
-          แปลอัตโนมัติเมื่อเลื่อนถึง
+          แปลอัตโนมัติขณะอ่าน
         </label>
+        <p class="hint">
+          เปิดหน้ามังงะแล้วแปลให้เอง · เปลี่ยนหน้าแล้วแปลหน้าใหม่ให้เอง
+          {settings.performance.prefetchLookahead > 0
+            ? ` · แปลล่วงหน้าอีก ${settings.performance.prefetchLookahead} หน้าบนเว็บที่เดาหน้าถัดไปได้`
+            : ''}
+        </p>
         <p class="hint">
           ปิดไว้ = แปลเฉพาะตอนสั่งเอง (คลิกขวาที่รูป → “แปลรูปนี้”) ปลอดภัยต่อโควตากว่า
         </p>

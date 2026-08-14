@@ -10,15 +10,23 @@
 | | สถานะ |
 |---|---|
 | A. Harness | ✅ ปิดครบทั้ง A1–A5 · 97 tests |
-| B1–B6, B8–B10 | ✅ เสร็จและพิสูจน์แล้ว · 105 tests · build 27 MB |
-| **B7 trigger** | คลิกขวา ✅ · **โหมด auto กำลังพิสูจน์อยู่** · prefetch กำลังทำ |
+| B1–B6, B8–B10 | ✅ เสร็จและพิสูจน์แล้ว · build 27 MB |
+| **B7 trigger** | ✅ **ครบแล้วทั้ง 3 ทาง** — คลิกขวา · auto · prefetch · 128 tests |
 | C. หลัง MVP | ยังไม่เริ่ม |
 
 **ทดสอบแล้วว่าใช้ได้จริง:** คลิกขวา → 9 กล่องใน 3.1 วิ · MangaDex (`blob:`) ✅ · imhentai (SW fetch) ✅ · สอง path ให้ hash ตรงกันจนใช้ cache ร่วมกันได้ · เปิดซ้ำขึ้นทันที · Diagnostics เขียวครบรวม WebGPU
 
 **🔴 เรื่องติดตั้งที่ต้องรู้:** Chrome บนเครื่องนี้ล็อก Developer mode ด้วย policy และเมิน `--load-extension` แบบเงียบ → **ใช้ Edge แทน ทดสอบแล้วว่าได้** ดู [INSTALL.md](../extension/INSTALL.md) ขั้นที่ 3ข และ [D-021](decisions/DECISIONS.md)
 
-**ยังไม่ได้ทำ:** prefetch (D-014) · Giga Viewer / Shonen Jump+ · EN→TH · Ollama
+**โหมดอัตโนมัติ — พิสูจน์แล้วบนเว็บจริงทั้งสองเว็บ** (ก่อนหน้านี้ทุกการทดสอบรันตอนสวิตช์ปิด จึงไม่เคยมีหลักฐานเลย):
+เปิดหน้าแล้วแปลเองโดยไม่ต้องแตะอะไร (imhentai 3.3 วิ · MangaDex 1.9 วิ) · เปลี่ยนหน้าแล้วแปลหน้าใหม่ (1.8–2.5 วิ) ·
+**สุ่มตรวจ 111 ครั้งระหว่างเปลี่ยนหน้า ไม่เจอคำแปลหน้าเก่าค้างเลยสักครั้ง** · ย้อนกลับ = แคช 0 คำขอ · ปิดสวิตช์แล้วหยุดสนิทจริง
+เจอบั๊ก 5 ตัวจากการทดสอบนี้ แก้ครบแล้ว ([D-023](decisions/DECISIONS.md) – [D-025](decisions/DECISIONS.md))
+
+**prefetch ทำแล้ว** ([D-026](decisions/DECISIONS.md)) — lookahead 3 (ตั้งได้ 0–10) · 1 คำขอต่อครั้ง ห่างกัน ≥ 500 ms (วัดจริง 1,749 ms) ·
+หยุดทันทีเมื่อสลับแท็บ · เฉพาะ imhentai ที่เดา URL ได้ · กดหน้าถัดไปแล้วคำแปลขึ้นใน **96 ms**
+
+**ยังไม่ได้ทำ:** Giga Viewer / Shonen Jump+ · EN→TH · Ollama
 
 เหตุผลเบื้องหลังทุกการตัดสินใจอยู่ใน [decisions/DECISIONS.md](decisions/DECISIONS.md) — **ไม่เห็นด้วยข้อไหนสั่งแก้ได้**
 
@@ -103,12 +111,18 @@
 - [ ] LRU 200 MB + ปุ่ม Clear
 - [ ] ⚠️ ห้ามใช้ `chrome.storage.local` เก็บ OCR result
 
-### B7. Trigger
-- [ ] **คลิกขวา → "แปลรูปนี้"** ให้ทำงานก่อน (ตัดตัวแปรออก ดีบั๊กง่าย)
-- [ ] แล้วค่อยเพิ่ม auto: IntersectionObserver `rootMargin: '200% 0 100% 0'` + MutationObserver + navigation
+### B7. Trigger ✅
+- [x] **คลิกขวา → "แปลรูปนี้"** ให้ทำงานก่อน (ตัดตัวแปรออก ดีบั๊กง่าย)
+- [x] auto: IntersectionObserver `rootMargin: '200% 0 100% 0'` + MutationObserver + navigation + **`load`**
   - ⚠️ **scroll event ใช้เป็นตัวขับไม่ได้** — เว็บเป้าหมายเป็น paged reader
-- [ ] `PagedReader` — ดักเปลี่ยนหน้า 4 ทาง: URL / `src` attribute / IntersectionObserver / คลิก nav
-- [ ] Prefetch lookahead 3 หน้า, ≤1 req พร้อมกัน, เว้น ≥500 ms, หยุดเมื่อ tab ไม่ active
+  - 🔴 **ตัวจุดชนวนที่ขาดไปคือ `load`** — ตอน `src` เปลี่ยน `img.complete` เป็น false ตลอดช่วง callback ของ MutationObserver
+    `enqueue()` จึง return เงียบๆ ทุกครั้ง = **เปลี่ยนหน้าแล้วไม่แปลเลย** (วัดได้ 60 วินาที 0 overlay) ดู [D-023](decisions/DECISIONS.md)
+- [x] `PagedReader` — ดักเปลี่ยนหน้า: URL / `src` attribute / IntersectionObserver / `load`
+  - 🔴 **หน่วยของงานต้องเป็น `(element, src ตอนเริ่ม)`** ไม่ใช่ element เปล่าๆ ไม่งั้นผลของหน้าเก่าจะถูกวาดทับหน้าใหม่ (เห็นกับตา: หน้า 1 แสดง hash ของหน้า 5)
+  - 🔴 **ห้าม `clearAll()` ตอน URL เปลี่ยน** — MangaDex สลับ element ไม่ใช่สลับ src คำแปลจะหายถาวรทุกครั้งที่กดหน้าถัดไป ([D-025](decisions/DECISIONS.md))
+- [x] Prefetch lookahead 3 หน้า, ≤1 req พร้อมกัน, เว้น ≥500 ms, หยุดเมื่อ tab ไม่ active
+  - กติกาเป็น pure function ใน `core/prefetch.ts` + 14 tests · URL math ใน `core/page-url.ts` + 8 tests
+  - เฉพาะเว็บที่มีช่อง `prefetch` ใน profile — **MangaDex ไม่มี** จึงไม่มีทางยิงคำขอเดาไปที่นั่น ([D-026](decisions/DECISIONS.md))
 
 ### B8. Site profiles
 - [ ] `mangadex.ts` — `.md--page img.img`, `acquire: 'content-script'`, preload รูป rect 0×0
