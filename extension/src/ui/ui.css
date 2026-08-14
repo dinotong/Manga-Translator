@@ -1,0 +1,104 @@
+/* Shared chrome for the popup and options pages. Deliberately small: these are
+   forms, and a CSS framework would be more bytes than the extension logic. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #17171a;
+  --muted: #5f6069;
+  --line: #e2e2e8;
+  --accent: #2f6df6;
+  --ok: #17803d;
+  --warn: #a9670c;
+  --fail: #c2321f;
+  --card: #f7f7fa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a;
+    --fg: #f2f2f5;
+    --muted: #a2a2ad;
+    --line: #303039;
+    --card: #1f1f25;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --fail: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.55 "Sarabun", "Noto Sans Thai", "Leelawadee UI", system-ui, sans-serif;
+}
+
+h1 { font-size: 17px; margin: 0 0 4px; }
+h2 { font-size: 14px; margin: 22px 0 8px; }
+p.hint { margin: 2px 0 10px; color: var(--muted); font-size: 12.5px; }
+
+section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background: var(--card);
+}
+
+label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 13px; }
+
+input[type="text"], input[type="password"], input[type="number"], select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+input[type="range"] { width: 100%; }
+
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+.row > button { flex: 0 0 auto; }
+
+.switch { display: flex; align-items: center; gap: 9px; margin: 8px 0; font-weight: 600; }
+.switch input { width: 17px; height: 17px; flex: 0 0 auto; margin: 0; }
+
+button {
+  padding: 7px 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.55; cursor: default; }
+
+.diag { list-style: none; margin: 10px 0 0; padding: 0; }
+.diag li { padding: 8px 0; border-top: 1px solid var(--line); }
+.diag li:first-child { border-top: none; }
+.diag .label { font-weight: 600; }
+.diag .detail { color: var(--muted); font-size: 12.5px; word-break: break-word; }
+.diag .fix { font-size: 12.5px; margin-top: 3px; }
+.ok { color: var(--ok); }
+.warn { color: var(--warn); }
+.fail { color: var(--fail); }
+
+.note {
+  border-left: 3px solid var(--warn);
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: 0 7px 7px 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+a { color: var(--accent); }
+.foot { color: var(--muted); font-size: 12px; margin-top: 12px; }

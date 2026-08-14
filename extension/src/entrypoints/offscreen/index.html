@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Manga Translator — ML host</title>
+  </head>
+  <body>
+    <!--
+      Never visible. It exists because a MV3 service worker has no DOM, no
+      OffscreenCanvas worth the name, no WebGPU, and gets terminated after ~30s
+      idle — so it cannot host onnxruntime. This document can, and it stays
+      alive between pages, which is also what makes the WebGPU shader cache
+      worth warming.
+    -->
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

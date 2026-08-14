@@ -1,0 +1,29 @@
+{
+  "name": "manga-translator-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome MV3 extension that translates manga in place while you read.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "tsc --noEmit && vitest run"
+  },
+  "dependencies": {
+    "idb": "^8.0.3",
+    "onnxruntime-web": "^1.27.0",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10",
+    "wxt": "^0.21.4"
+  }
+}
