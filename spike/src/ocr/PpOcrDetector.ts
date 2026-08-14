@@ -69,9 +69,12 @@ export const PP_OCR_DEFAULTS: PpOcrOptions = {
   maxSide: 960,
   expandRatio: 0.1,
   components: { ...COMPONENT_DEFAULTS, threshold: 0.3, minArea: 20, minSide: 3 },
-  // ~1% of the long edge: enough to close the gap between glyphs in a column,
-  // small enough to leave the gap between two columns intact.
-  dilateRatio: 0.01,
+  // 1.5% of the long edge. Measured over all 18 fixtures: 0.01 leaves stray
+  // fragments (the test page splits into 10 regions where 8 are real), 0.015
+  // absorbs them, and 0.02 starts collapsing distinct regions on busier pages
+  // (006: 13->9, 007: 11->8) without improving the test page at all. See
+  // DECISIONS D-009.
+  dilateRatio: 0.015,
   nmsIou: 0.6,
   numThreads: 1,
 };
@@ -190,7 +193,13 @@ export class PpOcrDetector implements TextDetector {
     // Deduplicate here, before grouping: two boxes over one line would otherwise
     // survive as one block with a doubled bounding box, and the crop sent for
     // recognition would be subtly wrong rather than obviously duplicated.
-    return suppressOverlaps(lines, this.opts.nmsIou);
+    const kept = suppressOverlaps(lines, this.opts.nmsIou);
+    if (kept.length < lines.length) {
+      // Only when it fires. A suppression that silently removes real lines and a
+      // suppression that never runs at all look identical from the outside.
+      console.debug(`[${this.id}] nms dropped ${lines.length - kept.length}/${lines.length} boxes`);
+    }
+    return kept;
   }
 
   dispose(): void {

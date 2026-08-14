@@ -117,6 +117,13 @@ export async function runPipeline(
   }
 
   const live = crops.filter((c) => c.inky);
+  if (live.length < crops.length) {
+    // The ink filter runs before any recognizer, so a page that renders nothing
+    // may never have reached one. Distinguishing "detected nothing", "skipped
+    // as blank" and "recognized nothing" is the difference between tuning the
+    // detector and debugging the model.
+    console.debug(`[pipeline] ink filter skipped ${crops.length - live.length}/${crops.length}`);
+  }
   const reader = deps.recognizer as Partial<PageReader>;
 
   if (typeof reader.readPage === 'function' && live.length > 0) {
