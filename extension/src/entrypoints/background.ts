@@ -72,6 +72,13 @@ export default defineBackground(() => {
       // Serialised globally: detection is GPU/CPU bound and running two pages at
       // once makes both slower while making the visible one arrive later.
       void enqueue(async () => {
+        // Jobs are serialised, so by the time this runs the tab may have turned
+        // the page and cancelled it. Starting anyway would spend a request from
+        // a 1,000/day budget on a page nobody is looking at.
+        if (controller.signal.aborted) {
+          inflight.delete(raw.jobId);
+          return;
+        }
         try {
           const settings = await loadSettings();
           const outcome = await runJob(
@@ -90,6 +97,10 @@ export default defineBackground(() => {
             warning: outcome.warning,
           });
         } catch (err) {
+          if (controller.signal.aborted) {
+            log.debug(`job ${raw.jobId} cancelled`);
+            return; // the tab has moved on and is no longer listening for this id
+          }
           const payload = toErrorPayload(err);
           log.warn(`job ${raw.jobId} failed: ${payload.code} ${payload.message}`);
           post(port, { t: 'ERROR', jobId: raw.jobId, ...payload });

@@ -1,8 +1,9 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { acquire } from '../content/acquire';
 import { Overlay } from '../content/overlay/overlay';
-import { elementKey, isLoaded, scanImages } from '../content/scan';
+import { elementKey, isLoaded, isPageCandidate, scanImages } from '../content/scan';
 import { profileFor } from '../content/site-profiles';
+import { pickPrefetch } from '../core/prefetch';
 import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import {
@@ -16,14 +17,22 @@ import { loadSettings, type Settings } from '../shared/settings';
 
 const log = makeLog('content');
 
+/** How often the prefetch scheduler is asked whether anything is allowed yet. */
+const PREFETCH_TICK_MS = 250;
+
 /**
  * The page side.
  *
- * Everything here is driven by visibility and mutation, never by scroll events.
- * Both target sites are paged readers: on MangaDex the user clicks through pages
- * and the scroll handler would essentially never fire, and imhentai replaces the
- * image without any scrolling at all. "Auto translate on scroll" is really
- * "auto translate on visibility change".
+ * Everything here is driven by visibility, loading and mutation — never by
+ * scroll events. Both target sites are paged readers: on MangaDex the user
+ * clicks through pages and a scroll handler would essentially never fire, and
+ * imhentai replaces the image without any scrolling at all. "Auto translate on
+ * scroll" is really "auto translate on the image changing".
+ *
+ * The unit of work is therefore not an element but the pair (element, the src it
+ * had when the job started). imhentai runs an entire gallery through one
+ * `<img id="gimg">`, so an element alone is not an identity, and a result that
+ * arrives after a page turn belongs to a page nobody is looking at.
  */
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -37,32 +46,68 @@ export default defineContentScript({
 
     const overlay = new Overlay(settings);
 
-    /** Jobs in flight or queued, keyed by element. */
-    const jobs = new Map<HTMLImageElement, string>();
-    const byJob = new Map<string, HTMLImageElement>();
-    /** Elements already done at their current src, so a re-scan is free. */
+    /** One attempt at one image. `img` is null for a speculative prefetch. */
+    interface Job {
+      id: string;
+      img: HTMLImageElement | null;
+      src: string;
+    }
+
+    const active = new Map<string, Job>();
+    const byImg = new Map<HTMLImageElement, Job>();
+    /** Last src each element was successfully translated at. */
     const done = new WeakMap<HTMLImageElement, string>();
+    /** Last src we have seen on each element, to tell a real page turn from noise. */
+    const lastSrc = new WeakMap<HTMLImageElement, string>();
+    /** Asked for while the bytes were still downloading; retried from `load`. */
+    const pendingLoad = new Map<HTMLImageElement, boolean>();
+    /** Elements the user asked for a second time — those skip the cache. */
+    const redo = new Set<HTMLImageElement>();
+    const waiters = new Map<string, () => void>();
     const queue: HTMLImageElement[] = [];
+
+    let watched = new WeakSet<HTMLImageElement>();
+    let observing = false;
     let running = 0;
-    let lastContextTarget: HTMLImageElement | null = null;
     let jobCounter = 0;
+    let lastContextTarget: HTMLImageElement | null = null;
+
+    const auto = (): boolean => settings.enabled && settings.autoTranslate;
+    const srcOf = (img: HTMLImageElement): string => img.currentSrc || img.src;
 
     /* ---------------- scheduling ---------------- */
 
-    /** Elements the user asked for a second time — those skip the cache. */
-    const redo = new Set<HTMLImageElement>();
-
     function enqueue(img: HTMLImageElement, manual = false): void {
-      if (!isLoaded(img) || jobs.has(img)) return;
-      const src = img.currentSrc || img.src;
+      if (!settings.enabled) return;
+      if (!manual && !settings.autoTranslate) return;
+
+      const src = srcOf(img);
+      if (!src) return;
+
+      if (!isLoaded(img)) {
+        // The single biggest hole in the first version: at the moment a reader
+        // swaps `src`, `complete` is false for the whole of the MutationObserver
+        // callback, so enqueueing there did nothing and the new page was simply
+        // never translated. Remember the request and let `load` deliver it.
+        pendingLoad.set(img, manual || (pendingLoad.get(img) ?? false));
+        return;
+      }
+
       const alreadyDone = done.get(img) === src;
+      // Asking again for a page that already has a translation can only mean the
+      // translation was not good enough, so that is the one case worth spending
+      // a fresh request on. A first manual request still uses the cache.
       if (!manual && alreadyDone) return;
-      // Asking again for a page that already has a translation can only mean
-      // the translation was not good enough, so that is the one case worth
-      // spending a fresh request on. A first manual request still uses the
-      // cache — re-reading an image the user has seen before would burn quota
-      // for an identical answer.
       if (manual && alreadyDone) redo.add(img);
+
+      const current = byImg.get(img);
+      if (current) {
+        if (current.src === src && !manual) return;
+        // The page turned while this was in flight. Finishing it would spend a
+        // request from a 1,000/day budget on a page the reader has left.
+        cancel(current);
+      }
+
       if (!queue.includes(img)) queue.push(img);
       pump();
     }
@@ -79,7 +124,8 @@ export default defineContentScript({
       queue.sort((a, b) => distance(a, centre) - distance(b, centre));
 
       const img = queue.shift();
-      if (!img || !img.isConnected) return pump();
+      if (!img) return;
+      if (!img.isConnected || !isLoaded(img)) return pump();
 
       running++;
       void run(img).finally(() => {
@@ -89,9 +135,9 @@ export default defineContentScript({
     }
 
     async function run(img: HTMLImageElement): Promise<void> {
-      const jobId = `j${++jobCounter}`;
-      jobs.set(img, jobId);
-      byJob.set(jobId, img);
+      const job: Job = { id: `j${++jobCounter}`, img, src: srcOf(img) };
+      active.set(job.id, job);
+      byImg.set(img, job);
       overlay.status(img, 'กำลังอ่านภาพ…');
 
       let source: JobSource;
@@ -99,7 +145,7 @@ export default defineContentScript({
         const got = await acquire(img, profile);
         source = {
           elementKey: elementKey(img),
-          url: got.kind === 'url' ? got.url : img.currentSrc || img.src,
+          url: got.kind === 'url' ? got.url : job.src,
           natural: got.natural,
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
@@ -110,19 +156,101 @@ export default defineContentScript({
       } catch (err) {
         const payload = toErrorPayload(err);
         overlay.status(img, payload.hint || payload.message, 'error');
-        jobs.delete(img);
-        byJob.delete(jobId);
+        settle(job);
         return; // must not await a reply that will never come — it would stall the queue
       }
 
+      // Cancelled while the bytes were being read: no reply is coming, and
+      // creating a waiter now would deadlock the queue.
+      if (!active.has(job.id)) return;
+
       // Hold the slot until the worker answers, so maxConcurrentOcr means what
       // it says rather than counting only the acquisition.
-      const settled = new Promise<void>((resolve) => waiters.set(jobId, resolve));
-      send({ t: 'RUN', jobId, source });
+      const settled = new Promise<void>((resolve) => waiters.set(job.id, resolve));
+      send({ t: 'RUN', jobId: job.id, source });
       await settled;
     }
 
-    const waiters = new Map<string, () => void>();
+    /** Forget a job and release whatever is waiting on it. */
+    function settle(job: Job): void {
+      active.delete(job.id);
+      if (job.img && byImg.get(job.img)?.id === job.id) byImg.delete(job.img);
+      if (prefetchJob?.id === job.id) {
+        prefetchJob = null;
+        prefetchInFlight = 0;
+      }
+      waiters.get(job.id)?.();
+      waiters.delete(job.id);
+    }
+
+    function cancel(job: Job): void {
+      send({ t: 'CANCEL', jobId: job.id });
+      settle(job);
+    }
+
+    /* ---------------- prefetch (see core/prefetch.ts for the rules) ---------------- */
+
+    /** Pages already fetched, in flight, or attempted. Absolute gallery numbers. */
+    const prefetchCovered = new Set<number>();
+    let prefetchInFlight = 0;
+    let prefetchLastStart = 0;
+    let prefetchJob: Job | null = null;
+
+    function prefetchTick(): void {
+      const cfg = profile.prefetch;
+      if (!cfg) return;
+
+      const page = profile.pageNumber?.(new URL(location.href)) ?? null;
+      const pick = pickPrefetch({
+        now: Date.now(),
+        enabled: auto(),
+        lookahead: settings.performance.prefetchLookahead,
+        visible: document.visibilityState === 'visible',
+        idle: running === 0 && queue.length === 0,
+        inFlight: prefetchInFlight,
+        lastStartAt: prefetchLastStart,
+        currentPage: page,
+        totalPages: cfg.total(document),
+        covered: prefetchCovered,
+      });
+      if (pick === null || page === null) return;
+
+      const shown = scanImages(profile).find(isLoaded);
+      const url = shown ? cfg.imageUrl(srcOf(shown), pick - page) : null;
+      if (!url) return;
+
+      // Marked covered before the request, so a failure is not retried in a loop.
+      prefetchCovered.add(pick);
+      prefetchInFlight = 1;
+      prefetchLastStart = Date.now();
+
+      const job: Job = { id: `p${++jobCounter}`, img: null, src: url };
+      active.set(job.id, job);
+      prefetchJob = job;
+      log.debug(`prefetch page ${pick}`);
+      send({
+        t: 'RUN',
+        jobId: job.id,
+        source: {
+          elementKey: `prefetch-${pick}`,
+          url,
+          natural: { w: 0, h: 0 },
+          pageUrl: location.href,
+          setKey: profile.setKey?.(new URL(location.href)) ?? null,
+          prefetch: true,
+        },
+      });
+    }
+
+    let prefetchTimer: ReturnType<typeof setInterval> | undefined;
+    if (profile.prefetch) prefetchTimer = setInterval(prefetchTick, PREFETCH_TICK_MS);
+
+    document.addEventListener('visibilitychange', () => {
+      // "Stop when the tab is hidden" has to mean the request already running,
+      // not just the next one. A backgrounded tab that keeps pulling pages is
+      // indistinguishable from a crawler.
+      if (document.visibilityState !== 'visible' && prefetchJob) cancel(prefetchJob);
+    });
 
     /* ---------------- port ---------------- */
 
@@ -158,84 +286,109 @@ export default defineContentScript({
     }
 
     function onPortMessage(msg: SwToContent): void {
-      const img = byJob.get(msg.jobId);
-      if (!img) return;
+      // Unknown id = a job we cancelled. The reply is about a page the reader
+      // has already left, and acting on it is exactly the bug this design is
+      // built to prevent.
+      const job = active.get(msg.jobId);
+      if (!job) return;
+      const img = job.img;
 
       if (msg.t === 'PROGRESS') {
-        overlay.status(img, `${stageLabel(msg.stage)}${msg.detail ? ` · ${msg.detail}` : ''}`);
+        if (img) overlay.status(img, `${stageLabel(msg.stage)}${msg.detail ? ` · ${msg.detail}` : ''}`);
         return;
       }
 
       if (msg.t === 'RESULT') {
+        // Keyed by image hash, so it is worth keeping whatever page it came from
+        // — including a prefetch, whose entire purpose is to be waiting here.
         overlay.setResult(msg.hash, msg.natural, msg.blocks);
-        overlay.attach(img, msg.hash);
-        overlay.status(
-          img,
-          msg.warning ?? (msg.fromCache ? '' : `แปลแล้ว ${msg.blocks.length} กล่อง`),
-          msg.warning ? 'error' : 'info',
-        );
-        if (!msg.warning) setTimeout(() => overlay.status(img, ''), 1600);
-        done.set(img, img.currentSrc || img.src);
-      } else {
+
+        if (img) {
+          const shown = srcOf(img);
+          if (shown !== job.src) {
+            // The page turned while this was in flight. Drawing it now would put
+            // the previous page's dialogue on the page in front of the reader,
+            // which is worse than no translation because it cannot be noticed.
+            log.debug('result arrived for a src that is no longer on screen — dropped');
+            settle(job);
+            enqueue(img); // catch up with whatever is actually showing
+            return;
+          }
+          overlay.attach(img, msg.hash);
+          overlay.status(
+            img,
+            msg.warning ?? (msg.fromCache ? '' : `แปลแล้ว ${msg.blocks.length} กล่อง`),
+            msg.warning ? 'error' : 'info',
+          );
+          if (!msg.warning) setTimeout(() => overlay.status(img, ''), 1600);
+          done.set(img, job.src);
+        }
+      } else if (img) {
         overlay.status(img, msg.hint || msg.message, 'error');
+      } else {
+        // A prefetch that failed is not the reader's problem: they never asked
+        // for that page and may never reach it.
+        log.debug(`prefetch failed: ${msg.code} ${msg.message}`);
       }
 
-      jobs.delete(img);
-      byJob.delete(msg.jobId);
-      waiters.get(msg.jobId)?.();
-      waiters.delete(msg.jobId);
+      settle(job);
     }
 
     /* ---------------- observers ---------------- */
 
-    const seen = new Set<HTMLImageElement>();
-
     // 200% above: on a long strip the user scrolls fast, so work has to start
     // roughly two screens before the image appears for the result to be there
     // when it does.
+    const ROOT_MARGIN = { above: 2, below: 1 };
     const io = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
-          if (settings.enabled && settings.autoTranslate) {
-            enqueue(entry.target as HTMLImageElement);
-          }
+          if (auto()) enqueue(entry.target as HTMLImageElement);
         }
       },
-      { rootMargin: '200% 0px 100% 0px', threshold: 0.01 },
+      { rootMargin: `${ROOT_MARGIN.above * 100}% 0px ${ROOT_MARGIN.below * 100}% 0px`, threshold: 0.01 },
     );
 
+    /**
+     * Start watching an element, loaded or not.
+     *
+     * The `load` listener is the important half. It is the only event that says
+     * "the bytes on screen are now these", which covers both an element that had
+     * not finished downloading during the first scan (MangaDex, every time) and
+     * an element whose src was swapped for the next page (imhentai, every turn).
+     */
+    function watch(img: HTMLImageElement): void {
+      if (watched.has(img)) return;
+      watched.add(img);
+      lastSrc.set(img, srcOf(img));
+      if (observing) io.observe(img);
+      img.addEventListener('load', onLoad);
+    }
+
+    function onLoad(ev: Event): void {
+      const img = ev.currentTarget as HTMLImageElement;
+      lastSrc.set(img, srcOf(img));
+      const asked = pendingLoad.get(img);
+      pendingLoad.delete(img);
+      if (asked !== undefined) {
+        enqueue(img, asked);
+        return;
+      }
+      if (auto() && isPageCandidate(img, profile)) enqueue(img);
+    }
+
     function rescan(): void {
-      for (const img of scanImages(profile)) {
-        if (seen.has(img)) continue;
-        seen.add(img);
-        io.observe(img);
+      for (const img of scanImages(profile, { includeUnloaded: true })) {
+        watch(img);
+        if (!auto() || !isLoaded(img) || !isPageCandidate(img, profile)) continue;
+        const r = img.getBoundingClientRect();
         // A preloaded page sitting at 0x0 never intersects, but it is exactly
         // the page the user is about to open — so translate it now and the page
         // turn is a cache hit.
-        if (settings.enabled && settings.autoTranslate && img.getBoundingClientRect().width === 0) {
-          enqueue(img);
-        }
+        if (r.width === 0 || nearViewport(r)) enqueue(img);
       }
     }
-
-    const mo = new MutationObserver((records) => {
-      let structural = false;
-      for (const r of records) {
-        if (r.type === 'attributes' && r.target instanceof HTMLImageElement) {
-          // The page turned on a reused element. Drop the old translation
-          // immediately — leaving it up for even one frame means showing the
-          // wrong page's dialogue.
-          overlay.invalidate(r.target);
-          overlay.status(r.target, '');
-          done.delete(r.target);
-          if (settings.enabled && settings.autoTranslate) enqueue(r.target);
-        } else if (r.type === 'childList' && r.addedNodes.length > 0) {
-          structural = true;
-        }
-      }
-      if (structural) debounceRescan();
-    });
 
     let rescanTimer: ReturnType<typeof setTimeout> | undefined;
     function debounceRescan(): void {
@@ -243,12 +396,72 @@ export default defineContentScript({
       rescanTimer = setTimeout(rescan, 150);
     }
 
-    mo.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['src', 'srcset', 'data-src', 'data-original'],
+    const mo = new MutationObserver((records) => {
+      let structural = false;
+      for (const r of records) {
+        if (r.type === 'attributes') {
+          const img = r.target;
+          if (!(img instanceof HTMLImageElement)) continue;
+          if (!watched.has(img) && !isPageCandidate(img, profile)) continue;
+
+          // `src` reflects the new value immediately; `currentSrc` does not
+          // update until the resource is selected, so this is the earliest
+          // moment a page turn can be detected.
+          const next = img.src || img.currentSrc;
+          if (lastSrc.get(img) === next) continue; // rewritten to the same URL
+          lastSrc.set(img, next);
+
+          // Drop the old translation now, not when the new one arrives —
+          // between those two moments it would be sitting on a different page.
+          overlay.invalidate(img);
+          overlay.status(img, '');
+          done.delete(img);
+          const job = byImg.get(img);
+          if (job) cancel(job);
+
+          watch(img);
+          if (auto()) enqueue(img); // parked until `load`, then run
+        } else if (r.type === 'childList' && r.addedNodes.length > 0) {
+          structural = true;
+        }
+      }
+      if (structural) debounceRescan();
     });
+
+    function startObserving(): void {
+      if (observing) return;
+      observing = true;
+      mo.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src', 'srcset', 'data-src', 'data-original'],
+      });
+      rescan();
+    }
+
+    /**
+     * Turning the extension off must actually stop it.
+     *
+     * Not "keep observing and check a flag": the reader turned it off, so the
+     * observers come down, the queue empties, work in flight is cancelled and
+     * every overlay goes away.
+     */
+    function stopObserving(): void {
+      observing = false;
+      io.disconnect();
+      mo.disconnect();
+      clearTimeout(rescanTimer);
+      for (const job of Array.from(active.values())) cancel(job);
+      queue.length = 0;
+      pendingLoad.clear();
+      redo.clear();
+      prefetchCovered.clear();
+      // Fresh set so re-enabling re-observes everything currently on the page;
+      // the load listeners survive, and adding them again is a no-op.
+      watched = new WeakSet<HTMLImageElement>();
+      overlay.clearAll();
+    }
 
     // A paged reader may change the URL without touching the DOM, and history
     // methods fire no event of their own.
@@ -262,10 +475,25 @@ export default defineContentScript({
     }
     for (const evt of ['popstate', 'mt:navigate']) {
       addEventListener(evt, () => {
-        overlay.clearAll();
-        seen.clear();
+        revalidate();
         debounceRescan();
       });
+    }
+
+    /**
+     * Check the one invariant that matters: every drawn translation belongs to
+     * the bytes currently in the element under it.
+     *
+     * Clearing everything on a URL change instead — which is what this used to
+     * do — is wrong on MangaDex, where a page turn shows a *different* element
+     * that already has a correct, already-paid-for translation on it. Wiping it
+     * meant the reader saw their translation vanish on every turn and, because
+     * the element was already marked done, it never came back.
+     */
+    function revalidate(): void {
+      for (const img of overlay.mountedTargets()) {
+        if (!img.isConnected || done.get(img) !== srcOf(img)) overlay.invalidate(img);
+      }
     }
 
     document.addEventListener(
@@ -284,19 +512,28 @@ export default defineContentScript({
         if (img) {
           // Explicit user action beats every cache and toggle — that is the
           // whole point of having a manual trigger while debugging.
+          watch(img);
           enqueue(img, true);
         } else {
           log.warn('right-clicked image not found in this document');
         }
       } else if (msg?.t === 'TRANSLATE_VISIBLE') {
         for (const img of scanImages(profile)) {
-          if (inViewport(img)) enqueue(img, true);
+          if (inViewport(img)) {
+            watch(img);
+            enqueue(img, true);
+          }
         }
       } else if (msg?.t === 'SETTINGS_CHANGED') {
         void loadSettings().then((next) => {
+          const wasEnabled = settings.enabled;
           settings = next;
+          if (!next.enabled) {
+            stopObserving();
+            return;
+          }
           overlay.updateSettings(next);
-          if (!next.enabled) overlay.clearAll();
+          if (!wasEnabled) startObserving();
           else if (next.autoTranslate) rescan();
         });
       }
@@ -310,8 +547,15 @@ export default defineContentScript({
       );
     }
 
-    rescan();
-    log.info(`watching ${seen.size} candidate image(s)`);
+    addEventListener('pagehide', () => clearInterval(prefetchTimer), { once: true });
+
+    if (settings.enabled) startObserving();
+    log.info(`observing=${observing} auto=${auto()} prefetch=${Boolean(profile.prefetch)}`);
+
+    function nearViewport(r: DOMRect): boolean {
+      const h = window.innerHeight;
+      return r.bottom > -ROOT_MARGIN.above * h && r.top < h + ROOT_MARGIN.below * h;
+    }
   },
 });
 

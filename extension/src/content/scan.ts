@@ -12,20 +12,42 @@ import type { SiteProfile } from './site-profiles';
 
 const CHROME_TAGS = new Set(['NAV', 'HEADER', 'FOOTER', 'ASIDE']);
 
-export function scanImages(profile: SiteProfile): HTMLImageElement[] {
-  const all = Array.from(document.images);
-  const excluded = profile.exclude
-    ? new Set(Array.from(document.querySelectorAll(profile.exclude)))
-    : null;
+/**
+ * Is this element a manga page?
+ *
+ * Split out of scanImages because the answer is needed one element at a time,
+ * from the `load` handler: an image that is still downloading has no natural
+ * size, so the heuristic cannot score it and the only correct thing to do is ask
+ * again once the bytes arrive.
+ */
+export function isPageCandidate(img: HTMLImageElement, profile: SiteProfile): boolean {
+  if (profile.exclude && img.matches(profile.exclude)) return false;
+  if (profile.pageSelector) return img.matches(profile.pageSelector);
+  if (!isLoaded(img)) return false;
+  return scoreCandidate(featuresOf(img)) >= PASS_SCORE;
+}
 
-  if (profile.pageSelector) {
-    const wanted = new Set(Array.from(document.querySelectorAll(profile.pageSelector)));
-    return all.filter((img) => wanted.has(img) && !excluded?.has(img) && isLoaded(img));
-  }
-
-  return all.filter((img) => {
-    if (excluded?.has(img) || !isLoaded(img)) return false;
-    return scoreCandidate(featuresOf(img)) >= PASS_SCORE;
+/**
+ * Find the manga pages on this document.
+ *
+ * `includeUnloaded` is what the observers use. MangaDex inserts its page
+ * elements before the blob is ready, so a scan that insisted on a decoded image
+ * found zero pages and — because nothing rescans when an existing element
+ * finishes loading — never found them at all. Watching an element that is still
+ * downloading and deciding later is the only version of this that works.
+ */
+export function scanImages(
+  profile: SiteProfile,
+  opts: { includeUnloaded?: boolean } = {},
+): HTMLImageElement[] {
+  return Array.from(document.images).filter((img) => {
+    if (!opts.includeUnloaded && !isLoaded(img)) return false;
+    if (!isLoaded(img) && !profile.pageSelector) {
+      // No selector and no pixels: nothing to score yet. Keep it so the caller
+      // can attach a load listener, and re-judge it then.
+      return !profile.exclude || !img.matches(profile.exclude);
+    }
+    return isPageCandidate(img, profile);
   });
 }
 

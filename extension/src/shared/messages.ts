@@ -61,6 +61,14 @@ export interface JobSource {
   setKey: string | null;
   /** Skip the cache and redo the work. Used by "translate again". */
   force?: boolean;
+  /**
+   * Speculative: nobody is looking at this page yet.
+   *
+   * The pipeline is identical — the point is to fill the cache — but the result
+   * is never drawn, a failure is never shown to the user, and the content script
+   * rate-limits these separately. See core/prefetch.ts.
+   */
+  prefetch?: boolean;
 }
 
 /* ---------- content script -> service worker (over a long-lived Port) ---------- */

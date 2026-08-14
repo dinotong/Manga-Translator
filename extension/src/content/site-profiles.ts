@@ -1,3 +1,4 @@
+import { bumpTrailingNumber } from '../core/page-url';
 import type { SourceLang } from '../shared/lang';
 
 /**
@@ -28,6 +29,20 @@ export interface SiteProfile {
   /** Current page number, used to notice a page turn from the URL alone. */
   pageNumber?(url: URL): number | null;
   navSelectors?: { next?: string; prev?: string };
+  /**
+   * Present only where a later page's image URL can be derived without asking
+   * the site for anything.
+   *
+   * Absent is the default and the safe answer: without it the extension never
+   * sends a speculative request to that host. See core/prefetch.ts for the rate
+   * rules that apply once it is present.
+   */
+  prefetch?: {
+    /** Last page of the gallery, read from the page itself. Null when unknown. */
+    total(doc: Document): number | null;
+    /** URL of the image `ahead` pages on from `currentSrc`, or null to give up. */
+    imageUrl(currentSrc: string, ahead: number): string | null;
+  };
   notes?: string;
 }
 
@@ -54,6 +69,11 @@ const mangadex: SiteProfile = {
     const n = u.pathname.match(/\/chapter\/[0-9a-f-]+\/(\d+)/i)?.[1];
     return n ? Number(n) : null;
   },
+  // No `prefetch`: the reader builds each page as a blob: URL inside its own
+  // JavaScript, so the next page's URL does not exist until MangaDex creates it.
+  // Anything we invented here would be a request to their servers for a URL we
+  // made up. The site preloads pages itself, and the scanner already picks up
+  // those zero-sized preload slots, which gets the same result honestly.
   notes: 'blob: URLs — service worker fetch cannot see them. Paged by default, long strip optional.',
 };
 
@@ -82,6 +102,18 @@ const imhentai: SiteProfile = {
     return n ? Number(n) : null;
   },
   navSelectors: { next: 'a.next_img, a.nav_next', prev: 'a.nav_prev' },
+  // Measured on the live site: the image is `<cdn>/<dir>/<gallery>/<n>.webp` and
+  // the page carries `<input id="pages">` with the gallery length, so both the
+  // next URL and the end of the book are knowable without a single extra
+  // request. That is the whole precondition for prefetching here.
+  prefetch: {
+    total: (doc) => {
+      const raw = (doc.querySelector('#pages') as HTMLInputElement | null)?.value;
+      const n = raw ? Number(raw) : Number.NaN;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    },
+    imageUrl: (currentSrc, ahead) => bumpTrailingNumber(currentSrc, ahead),
+  },
 };
 
 /** Anything else: heuristic scoring in scan.ts decides what is a manga page. */

@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '../../ui/ui.css';
+import { clampLookahead, MAX_LOOKAHEAD } from '../../core/prefetch';
 import { PRESETS, type PresetName } from '../../core/resolution';
 import {
   LANG_LABELS_TH,
@@ -253,6 +254,37 @@ function Options() {
         />
         <p class="hint">
           สูงเกินไป = สอง bubble ติดกันถูกรวมเป็นอันเดียว · ต่ำเกินไป = ได้ตัวอักษรทีละตัว
+        </p>
+      </section>
+
+      <section>
+        <h2>แปลล่วงหน้า</h2>
+        <label>
+          อ่านล่วงหน้า {s.performance.prefetchLookahead === 0 ? 'ปิด' : `${s.performance.prefetchLookahead} หน้า`}
+        </label>
+        <input
+          type="range" min="0" max={String(MAX_LOOKAHEAD)} step="1"
+          value={String(s.performance.prefetchLookahead)}
+          onInput={(e) =>
+            void patch({
+              performance: {
+                ...s.performance,
+                prefetchLookahead: clampLookahead((e.target as HTMLInputElement).value),
+              },
+            })
+          }
+        />
+        <p class="hint">
+          แปลหน้าถัดๆ ไปไว้ล่วงหน้าขณะที่คุณยังอ่านหน้านี้ พอกดหน้าถัดไปคำแปลจะขึ้นทันที ·
+          <b>0 = ปิด</b> · ทำงานเฉพาะตอนเปิด “แปลอัตโนมัติ”
+        </p>
+        <p class="hint">
+          ยิงทีละคำขอ เว้นอย่างน้อย 0.5 วินาที และ<b>หยุดทันทีที่สลับไปแท็บอื่น</b> —
+          เพื่อไม่ให้รบกวนเซิร์ฟเวอร์ของเว็บที่เราไปอ่าน
+          · ใช้ได้เฉพาะเว็บที่เดา URL หน้าถัดไปได้ (imhentai) · MangaDex สร้าง URL ในโค้ดของตัวเอง จึงเดาไม่ได้และไม่ทำ
+        </p>
+        <p class="hint">
+          จำนวนคำขอรวมเท่าเดิม (1 หน้า = 1 คำขอ) แต่ถ้าเลิกอ่านกลางคัน หน้าที่แปลไว้ล่วงหน้าจะเสียเปล่า
         </p>
       </section>
 

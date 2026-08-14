@@ -1,3 +1,4 @@
+import { clampLookahead } from '../core/prefetch';
 import type { PresetName } from '../core/resolution';
 import type { SourceLang, TargetLang } from './lang';
 
@@ -58,6 +59,7 @@ export interface Settings {
   };
 
   performance: {
+    /** Pages to translate ahead of the reader. 0 disables it; capped at 10. */
     prefetchLookahead: number;
     /** Locked at 1: detection is CPU/GPU bound and parallelism only adds jank. */
     maxConcurrentOcr: 1;
@@ -116,7 +118,15 @@ function hydrate(stored: unknown): Settings {
     },
     ocr: { ...d.ocr, ...s.ocr },
     display: { ...d.display, ...s.display },
-    performance: { ...d.performance, ...s.performance, maxConcurrentOcr: 1 },
+    performance: {
+      ...d.performance,
+      ...s.performance,
+      maxConcurrentOcr: 1,
+      // Clamped on read, not only on write: this value decides how many requests
+      // go to someone else's server, and a hand-edited storage entry must not be
+      // able to raise it.
+      prefetchLookahead: clampLookahead(s.performance?.prefetchLookahead ?? d.performance.prefetchLookahead),
+    },
     perSet: { ...d.perSet, ...s.perSet },
   };
 }

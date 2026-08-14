@@ -32,6 +32,19 @@ export class Overlay {
   private readonly results = new Map<string, { natural: Size; blocks: OverlayBlock[] }>();
   private readonly mounted = new Map<HTMLImageElement, Mounted>();
   private readonly statuses = new Map<HTMLImageElement, HTMLDivElement>();
+  /**
+   * Elements whose size we are following.
+   *
+   * A paged reader can resize an image without a scroll or a window resize:
+   * MangaDex keeps every page of the chapter in the DOM and turns a page by
+   * collapsing one to 0x0 and expanding the next. Without this, a page that was
+   * translated while it sat in the preload slot would keep its overlay at zero
+   * size after it became the page on screen.
+   */
+  private readonly observed = new Set<HTMLImageElement>();
+  private readonly ro = new ResizeObserver(() => {
+    this.dirty = true;
+  });
   private dirty = true;
   private settings: Settings;
 
@@ -85,6 +98,7 @@ export class Overlay {
 
     this.root.append(layer);
     this.mounted.set(target, { hash, layer, target });
+    this.track(target);
     this.dirty = true;
     return true;
   }
@@ -92,6 +106,29 @@ export class Overlay {
   detach(target: HTMLImageElement): void {
     this.mounted.get(target)?.layer.remove();
     this.mounted.delete(target);
+    this.untrack(target);
+  }
+
+  /** Every element currently showing a translation. */
+  mountedTargets(): HTMLImageElement[] {
+    return Array.from(this.mounted.keys());
+  }
+
+  /** The hash currently drawn on an element, if any. */
+  hashOn(target: HTMLImageElement): string | undefined {
+    return this.mounted.get(target)?.hash;
+  }
+
+  private track(target: HTMLImageElement): void {
+    if (this.observed.has(target)) return;
+    this.observed.add(target);
+    this.ro.observe(target);
+  }
+
+  private untrack(target: HTMLImageElement): void {
+    if (this.mounted.has(target) || this.statuses.has(target)) return;
+    if (!this.observed.delete(target)) return;
+    this.ro.unobserve(target);
   }
 
   /**
@@ -114,6 +151,7 @@ export class Overlay {
     if (!text) {
       this.statuses.get(target)?.remove();
       this.statuses.delete(target);
+      this.untrack(target);
       return;
     }
     let el = this.statuses.get(target);
@@ -121,6 +159,7 @@ export class Overlay {
       el = document.createElement('div');
       this.root.append(el);
       this.statuses.set(target, el);
+      this.track(target);
     }
     el.className = kind === 'error' ? 'mt-status err' : 'mt-status';
     el.textContent = text;
@@ -148,6 +187,7 @@ export class Overlay {
         if (!target.isConnected) {
           el.remove();
           this.statuses.delete(target);
+          this.untrack(target);
           continue;
         }
         place(el, target, true);
