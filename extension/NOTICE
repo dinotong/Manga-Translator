@@ -1,0 +1,58 @@
+Manga Translator
+Copyright 2026 Manga Translator contributors
+
+This product includes software developed as part of the Manga Translator
+project, licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------
+
+ONNX Runtime Web (onnxruntime-web)
+  Copyright (c) Microsoft Corporation
+  Licensed under the MIT License.
+  https://github.com/microsoft/onnxruntime
+  Bundled: the WebAssembly runtime under assets/.
+
+PP-OCRv4 mobile text detection model (ch_PP-OCRv4_det_infer.onnx)
+  Copyright (c) PaddlePaddle Authors
+  Licensed under the Apache License, Version 2.0.
+  https://github.com/PaddlePaddle/PaddleOCR
+  NOT bundled. Downloaded at first use into the browser's Cache Storage
+  from https://huggingface.co/SWHL/RapidOCR (a mirror of the upstream
+  release). Used only to locate text regions, never to recognise them.
+
+Preact
+  Copyright (c) 2015-present Jason Miller
+  Licensed under the MIT License.
+  https://github.com/preactjs/preact
+
+idb
+  Copyright (c) Jake Archibald
+  Licensed under the ISC License.
+  https://github.com/jakearchibald/idb
+
+WXT (build tooling only, not shipped)
+  Licensed under the MIT License.
+  https://github.com/wxt-dev/wxt
+
+--------------------------------------------------------------------------
+Deliberate exclusions
+--------------------------------------------------------------------------
+
+comic-text-detector (GPL-3.0) and YOLOv8/Ultralytics (AGPL-3.0) are
+capable text detectors that are NOT used here. This extension is meant to
+be handed to other people, which counts as distribution, and either
+licence would extend its terms to the whole extension. Ultralytics also
+treats trained weights as covered.
+
+The `license` field on the detector interface exists so this stays a
+checkable property rather than a promise in a document.
+
+--------------------------------------------------------------------------
+Services
+--------------------------------------------------------------------------
+
+Google Gemini API is used for reading and translating text. It is a
+service, not bundled code, and each user supplies their own API key. No
+developer key is embedded anywhere in this extension.

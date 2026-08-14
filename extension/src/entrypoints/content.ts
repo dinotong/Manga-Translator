@@ -49,10 +49,20 @@ export default defineContentScript({
 
     /* ---------------- scheduling ---------------- */
 
-    function enqueue(img: HTMLImageElement, force = false): void {
+    /** Elements the user asked for a second time — those skip the cache. */
+    const redo = new Set<HTMLImageElement>();
+
+    function enqueue(img: HTMLImageElement, manual = false): void {
       if (!isLoaded(img) || jobs.has(img)) return;
       const src = img.currentSrc || img.src;
-      if (!force && done.get(img) === src) return;
+      const alreadyDone = done.get(img) === src;
+      if (!manual && alreadyDone) return;
+      // Asking again for a page that already has a translation can only mean
+      // the translation was not good enough, so that is the one case worth
+      // spending a fresh request on. A first manual request still uses the
+      // cache — re-reading an image the user has seen before would burn quota
+      // for an identical answer.
+      if (manual && alreadyDone) redo.add(img);
       if (!queue.includes(img)) queue.push(img);
       pump();
     }
@@ -93,8 +103,10 @@ export default defineContentScript({
           natural: got.natural,
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
+          ...(redo.has(img) ? { force: true } : {}),
           ...(got.kind === 'bytes' ? { image: got.ref } : {}),
         };
+        redo.delete(img);
       } catch (err) {
         const payload = toErrorPayload(err);
         overlay.status(img, payload.hint || payload.message, 'error');
