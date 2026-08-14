@@ -71,6 +71,25 @@ export class PpOcrDetector {
   readonly license = 'Apache-2.0';
 
   private session: ort.InferenceSession | null = null;
+  /**
+   * In-flight init, shared by every concurrent caller.
+   *
+   * Without this, a prewarm and a diagnostics probe arriving in the same tick
+   * both see `session === null`, both download the 4.7 MB model, and both build
+   * a session — at which point onnxruntime throws "Session already started" and
+   * "Session mismatch". Observed in a real browser, not hypothetical.
+   */
+  private initing: Promise<void> | null = null;
+  /**
+   * Serialises inference.
+   *
+   * An InferenceSession is not reentrant: two overlapping run() calls on the
+   * same session throw "Session already started" / "Session mismatch". That
+   * happens for real — flipping the toggle prewarms while the first visible
+   * page is already being detected. Queueing costs nothing here because the
+   * pipeline is deliberately one-page-at-a-time anyway.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
   private opts: PpOcrOptions;
   /** Which backend actually loaded. 'auto' may fall back and the user must be able to see that. */
   private activeBackend: DetBackend = 'wasm';
@@ -94,7 +113,13 @@ export class PpOcrDetector {
 
   async init(onProgress?: (fraction: number) => void): Promise<void> {
     if (this.session) return;
+    this.initing ??= this.buildSession(onProgress).finally(() => {
+      this.initing = null;
+    });
+    return this.initing;
+  }
 
+  private async buildSession(onProgress?: (fraction: number) => void): Promise<void> {
     ort.env.wasm.numThreads = this.opts.numThreads;
     ort.env.wasm.wasmPaths = { wasm: ortWasmUrl, mjs: ortMjsUrl };
     ort.env.logLevel = 'error';
@@ -138,7 +163,11 @@ export class PpOcrDetector {
    */
   async prewarm(): Promise<void> {
     if (!this.session) await this.init();
-    const canvas = new OffscreenCanvas(this.opts.maxSide, this.opts.maxSide);
+    // Portrait, at a real page's proportions rather than a square: WebGPU
+    // compiles shaders per input shape, so warming a shape nothing will ever
+    // use pays the cost twice. 1280x1808 is a measured imhentai page and
+    // downscales to the same 672x960 model input most manga pages land on.
+    const canvas = new OffscreenCanvas(1280, 1808);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.fillStyle = '#fff';
@@ -151,7 +180,16 @@ export class PpOcrDetector {
     }
   }
 
-  async detect(bitmap: ImageBitmap, lang: LangCode): Promise<TextLine[]> {
+  detect(bitmap: ImageBitmap, lang: LangCode): Promise<TextLine[]> {
+    const next = this.queue.then(
+      () => this.detectNow(bitmap, lang),
+      () => this.detectNow(bitmap, lang),
+    );
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async detectNow(bitmap: ImageBitmap, lang: LangCode): Promise<TextLine[]> {
     const session = this.session;
     if (!session) throw new PipelineError('MODEL_LOAD_FAILED', `${this.id}: call init() first`);
 
@@ -197,5 +235,6 @@ export class PpOcrDetector {
   dispose(): void {
     void this.session?.release();
     this.session = null;
+    this.initing = null;
   }
 }
