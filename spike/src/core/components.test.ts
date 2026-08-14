@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Size } from '../types';
-import { COMPONENT_DEFAULTS, connectedComponents, inkRatio } from './components';
+import { COMPONENT_DEFAULTS, connectedComponents, dilate, inkRatio } from './components';
 
 /** Build a probability map from an ASCII sketch. '#' is ink, '.' is background. */
 function mask(rows: string[]): { map: Float32Array; size: Size } {
@@ -15,7 +15,114 @@ function mask(rows: string[]): { map: Float32Array; size: Size } {
   return { map, size: { w, h } };
 }
 
+/** Inverse of mask(): render a map back to ASCII so a failure is readable. */
+function ascii(map: ArrayLike<number>, size: Size): string[] {
+  const rows: string[] = [];
+  for (let y = 0; y < size.h; y++) {
+    let row = '';
+    for (let x = 0; x < size.w; x++) row += (map[y * size.w + x] ?? 0) > 0 ? '#' : '.';
+    rows.push(row);
+  }
+  return rows;
+}
+
 const loose = { ...COMPONENT_DEFAULTS, minArea: 1, minSide: 1 };
+
+describe('dilate', () => {
+  it('grows a lone point into a square', () => {
+    const { map, size } = mask([
+      '.....',
+      '.....',
+      '..#..',
+      '.....',
+      '.....',
+    ]);
+    expect(ascii(dilate(map, size, 1, 1), size)).toEqual([
+      '.....',
+      '.###.',
+      '.###.',
+      '.###.',
+      '.....',
+    ]);
+  });
+
+  it('takes the max rather than accumulating — a dilated map is still probabilities', () => {
+    // Values chosen to be exact in float32 so the comparison is about the
+    // operator, not about rounding.
+    const size = { w: 3, h: 1 };
+    const map = Float32Array.from([1, 0.5, 0]);
+    expect([...dilate(map, size, 1, 0)]).toEqual([1, 1, 0.5]);
+  });
+
+  it('joins glyphs that sit within the radius of each other', () => {
+    // The reason dilate exists: two kana in one column must label as one line.
+    const { map, size } = mask([
+      '#....',
+      '.....',
+      '#....',
+    ]);
+    expect(connectedComponents(map, size, loose)).toHaveLength(2);
+    expect(connectedComponents(dilate(map, size, 0, 1), size, loose)).toHaveLength(1);
+  });
+
+  it('leaves glyphs further apart than the radius separate', () => {
+    // ...and the reason the radius stays small: two columns must not merge here,
+    // that call belongs to grouping.ts.
+    const { map, size } = mask([
+      '#...#',
+      '.....',
+      '#...#',
+    ]);
+    expect(connectedComponents(dilate(map, size, 1, 1), size, loose)).toHaveLength(2);
+  });
+
+  it('is a no-op at radius 0', () => {
+    const { map, size } = mask([
+      '.#..',
+      '#.#.',
+      '..#.',
+    ]);
+    expect([...dilate(map, size, 0, 0)]).toEqual([...map]);
+  });
+
+  it('applies radiusX and radiusY independently', () => {
+    const { map, size } = mask([
+      '.....',
+      '..#..',
+      '.....',
+    ]);
+    expect(ascii(dilate(map, size, 2, 0), size)).toEqual([
+      '.....',
+      '#####',
+      '.....',
+    ]);
+    expect(ascii(dilate(map, size, 0, 2), size)).toEqual([
+      '..#..',
+      '..#..',
+      '..#..',
+    ]);
+  });
+
+  it('clamps at the edges instead of reading past the array', () => {
+    // A radius larger than the map would walk off both ends of every row. The
+    // symptom would be undefined -> NaN spreading through the mask rather than
+    // a thrown error, so assert on the values, not on "it did not crash".
+    const { map, size } = mask([
+      '#..',
+      '...',
+      '..#',
+    ]);
+    const out = dilate(map, size, 9, 9);
+
+    expect(out).toHaveLength(size.w * size.h);
+    expect([...out].every((v) => Number.isFinite(v) && v > 0)).toBe(true);
+  });
+
+  it('accepts a plain array, not just a Float32Array', () => {
+    // The detector hands over an ONNX output tensor; tests hand over literals.
+    expect([...dilate([0, 1, 0], { w: 3, h: 1 }, 1, 0)]).toEqual([1, 1, 1]);
+  });
+});
 
 describe('connectedComponents', () => {
   it('finds nothing in an empty map', () => {

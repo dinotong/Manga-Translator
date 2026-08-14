@@ -5,6 +5,7 @@ import {
   iou,
   overlapRatio,
   padRect,
+  suppressOverlaps,
   toNorm,
   toPix,
   unionAll,
@@ -55,6 +56,64 @@ describe('iou', () => {
     const a = { x: 100, y: 200, w: 80, h: 120 };
     const b = { x: 103, y: 204, w: 80, h: 120 };
     expect(iou(a, b)).toBeGreaterThan(0.6);
+  });
+});
+
+describe('suppressOverlaps', () => {
+  const line = (x: number, y: number, w: number, h: number, score: number) => ({
+    rect: { x, y, w, h },
+    score,
+  });
+
+  it('keeps the higher-scoring box of a near-duplicate pair', () => {
+    const strong = line(100, 200, 80, 120, 0.9);
+    const weak = line(103, 204, 80, 120, 0.5);
+    expect(suppressOverlaps([weak, strong])).toEqual([strong]);
+  });
+
+  it('keeps boxes that merely touch or overlap a little', () => {
+    // Two columns of vertical text, expanded until their boxes graze each
+    // other. Suppressing one here would delete half a bubble.
+    const left = line(0, 0, 30, 200, 0.8);
+    const right = line(25, 0, 30, 200, 0.7);
+    expect(suppressOverlaps([left, right])).toHaveLength(2);
+  });
+
+  it('leaves disjoint boxes alone', () => {
+    const boxes = [line(0, 0, 10, 10, 0.9), line(100, 100, 10, 10, 0.4)];
+    expect(suppressOverlaps(boxes)).toEqual(boxes);
+  });
+
+  it('preserves input order rather than confidence order', () => {
+    const first = line(0, 0, 10, 10, 0.3);
+    const second = line(100, 0, 10, 10, 0.9);
+    expect(suppressOverlaps([first, second])).toEqual([first, second]);
+  });
+
+  it('suppresses a whole cluster against the single winner', () => {
+    const best = line(0, 0, 100, 100, 0.9);
+    const dupes = [line(2, 2, 100, 100, 0.8), line(4, 1, 98, 100, 0.7), line(1, 3, 100, 99, 0.6)];
+    expect(suppressOverlaps([best, ...dupes])).toEqual([best]);
+  });
+
+  it('breaks score ties by input order so runs are reproducible', () => {
+    const a = line(0, 0, 100, 100, 0.7);
+    const b = line(1, 1, 100, 100, 0.7);
+    expect(suppressOverlaps([a, b])).toEqual([a]);
+    expect(suppressOverlaps([b, a])).toEqual([b]);
+  });
+
+  it('respects a custom threshold', () => {
+    const a = line(0, 0, 100, 100, 0.9);
+    const b = line(50, 0, 100, 100, 0.5); // IoU = 1/3
+    expect(suppressOverlaps([a, b], 0.6)).toHaveLength(2);
+    expect(suppressOverlaps([a, b], 0.3)).toEqual([a]);
+  });
+
+  it('handles empty and single-item input', () => {
+    expect(suppressOverlaps([])).toEqual([]);
+    const only = [line(0, 0, 10, 10, 0.5)];
+    expect(suppressOverlaps(only)).toEqual(only);
   });
 });
 

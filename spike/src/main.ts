@@ -31,6 +31,8 @@ const els = {
   detector: $<HTMLSelectElement>('detector'),
   recognizer: $<HTMLSelectElement>('recognizer'),
   backend: $<HTMLSelectElement>('backend'),
+  dilate: $<HTMLSelectElement>('dilate'),
+  nms: $<HTMLSelectElement>('nms'),
   apiKey: $<HTMLInputElement>('api-key'),
   runSamples: $<HTMLButtonElement>('run-samples'),
   exportPng: $<HTMLButtonElement>('export-png'),
@@ -66,8 +68,21 @@ async function getDetector(kind: string): Promise<TextDetector> {
   // different engines, and comparing them is the entire point of M0.
   const key = `det:${kind}:${backend}`;
 
+  // Dilate and NMS are post-processing, so they are applied to whichever
+  // detector we end up with rather than being part of its cache key. Sweeping
+  // them must not pay the ~1.7 s WebGPU shader compile again on every step.
+  const tune = (d: TextDetector): TextDetector => {
+    if (d instanceof PpOcrDetector) {
+      d.setPostprocess({
+        dilateRatio: Number(els.dilate.value),
+        nmsIou: Number(els.nms.value),
+      });
+    }
+    return d;
+  };
+
   const cached = engines.get(key) as TextDetector | undefined;
-  if (cached) return cached;
+  if (cached) return tune(cached);
 
   const detector: TextDetector =
     kind === 'ppocr' ? new PpOcrDetector({ backend }) : new MockDetector();
@@ -81,7 +96,7 @@ async function getDetector(kind: string): Promise<TextDetector> {
   note(`โหลด ${detector.id} เสร็จใน ${(loadMs / 1000).toFixed(1)}s${active}`);
 
   engines.set(key, detector);
-  return detector;
+  return tune(detector);
 }
 
 async function getRecognizer(kind: string): Promise<TextRecognizer> {
@@ -199,6 +214,8 @@ async function processFiles(files: readonly File[]): Promise<void> {
         detector: els.detector.value,
         recognizer: els.recognizer.value,
         backend: els.backend.value,
+        dilate: Number(els.dilate.value),
+        nms: Number(els.nms.value),
       },
       env: {
         webgpu: 'gpu' in navigator,

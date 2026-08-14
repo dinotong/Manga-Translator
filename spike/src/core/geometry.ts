@@ -40,6 +40,45 @@ export function iou(a: PixRect, b: PixRect): number {
   return union > 0 ? inter / union : 0;
 }
 
+/**
+ * Greedy non-maximum suppression: keep the best box of each duplicate cluster.
+ *
+ * A DB probability map does not produce clean disjoint blobs. A glyph whose
+ * strokes fall just under the threshold splits into two components that both
+ * cover most of the same line, and expandBox then grows them into near-copies
+ * of each other. Two boxes over one line means that line is cropped, recognized
+ * and billed twice, and the overlay draws the same sentence on top of itself.
+ *
+ * The threshold is deliberately high. At 0.6 two boxes must be almost the same
+ * box to be called duplicates; the adjacent columns of vertical Japanese, which
+ * do overlap somewhat once expanded, stay well below it. Dropping a real line
+ * here is unrecoverable — grouping never sees it again — so this errs towards
+ * keeping too much.
+ *
+ * Ties in score resolve by input order, so the result is stable across runs.
+ */
+export function suppressOverlaps<T extends { rect: PixRect; score: number }>(
+  items: readonly T[],
+  maxIou = 0.6,
+): T[] {
+  // Indices, not the objects themselves: two detections can be structurally
+  // identical, and a Set of references would then behave differently from a Set
+  // of equal-but-distinct rects.
+  const byScore = items
+    .map((_, i) => i)
+    .sort((a, b) => items[b]!.score - items[a]!.score || a - b);
+
+  const kept: number[] = [];
+  for (const i of byScore) {
+    if (kept.every((k) => iou(items[k]!.rect, items[i]!.rect) <= maxIou)) kept.push(i);
+  }
+
+  // Back to the caller's order: a dedupe pass has no business also re-sorting
+  // its input by confidence.
+  const keep = new Set(kept);
+  return items.filter((_, i) => keep.has(i));
+}
+
 /** Smallest rect containing all inputs. Throws on empty — an empty union is a bug upstream. */
 export function unionAll(rects: readonly PixRect[]): PixRect {
   const first = rects[0];

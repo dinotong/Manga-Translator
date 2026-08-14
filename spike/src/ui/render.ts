@@ -204,6 +204,7 @@ export function renderStoredRun(root: HTMLElement, run: BenchRun): void {
         <tr><td>detector</td><td>${escapeHtml(run.config.detector)}</td></tr>
         <tr><td>recognizer</td><td>${escapeHtml(run.config.recognizer)}</td></tr>
         <tr><td>backend</td><td>${escapeHtml(run.config.backend)}</td></tr>
+        <tr><td>dilate / nms</td><td>${run.config.dilate ?? '?'} / ${run.config.nms ?? '?'}</td></tr>
         <tr><td>preset</td><td>${escapeHtml(run.config.preset)}</td></tr>
         <tr><td>lang</td><td>${escapeHtml(run.config.lang)}</td></tr>
         <tr><td>webgpu</td><td>${run.env.webgpu ? 'available' : 'unavailable'}</td></tr>

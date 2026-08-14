@@ -36,6 +36,13 @@ export interface BenchRun {
     detector: string;
     recognizer: string;
     backend: string;
+    /**
+     * Post-processing knobs. Optional because runs recorded before they were
+     * tunable have none, and losing that whole history to a schema change would
+     * be a poor trade for a field that reads "unknown" just as well.
+     */
+    dilate?: number;
+    nms?: number;
   };
   env: {
     webgpu: boolean;

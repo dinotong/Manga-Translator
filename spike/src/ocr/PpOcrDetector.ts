@@ -16,6 +16,7 @@ import {
   dilate,
 } from '../core/components';
 import { DIRECTION_DEFAULTS, detectDirection } from '../core/direction';
+import { suppressOverlaps } from '../core/geometry';
 import { expandBox, planDetInput, rgbaToNchw } from '../core/preprocess';
 import type { LangCode, TextLine } from '../types';
 import { ModelNotDownloadedError, type TextDetector } from './types';
@@ -50,9 +51,17 @@ export interface PpOcrOptions {
    * than one per line — see dilate() in core/components.ts.
    */
   dilateRatio: number;
+  /**
+   * Drop the lower-scoring of two boxes overlapping by more than this IoU.
+   * See suppressOverlaps in core/geometry.ts for why it is set this high.
+   */
+  nmsIou: number;
   /** 1 to start: worker threads hit a different CSP inside extensions. */
   numThreads: number;
 }
+
+/** The knobs that only affect post-processing, so changing them needs no new session. */
+export type PostprocessOptions = Pick<PpOcrOptions, 'dilateRatio' | 'nmsIou'>;
 
 export const PP_OCR_DEFAULTS: PpOcrOptions = {
   modelUrl: '/models/ppocr-v4-det.onnx',
@@ -63,6 +72,7 @@ export const PP_OCR_DEFAULTS: PpOcrOptions = {
   // ~1% of the long edge: enough to close the gap between glyphs in a column,
   // small enough to leave the gap between two columns intact.
   dilateRatio: 0.01,
+  nmsIou: 0.6,
   numThreads: 1,
 };
 
@@ -82,6 +92,22 @@ export class PpOcrDetector implements TextDetector {
 
   get backend(): DetBackend {
     return this.activeBackend;
+  }
+
+  get postprocess(): PostprocessOptions {
+    return { dilateRatio: this.opts.dilateRatio, nmsIou: this.opts.nmsIou };
+  }
+
+  /**
+   * Retune post-processing without rebuilding the session.
+   *
+   * These knobs are the ones worth sweeping by hand, and a WebGPU session costs
+   * ~1.7 s of shader compilation to create (ADR-001). Tying them to construction
+   * would make every step of a sweep pay that again for a decision the model was
+   * never part of.
+   */
+  setPostprocess(patch: Partial<PostprocessOptions>): void {
+    this.opts = { ...this.opts, ...patch };
   }
 
   async init(onProgress?: (fraction: number) => void): Promise<void> {
@@ -148,7 +174,7 @@ export class PpOcrDetector implements TextDetector {
     const radius = Math.max(1, Math.round(Math.max(input.w, input.h) * this.opts.dilateRatio));
     const mask = radius > 0 ? dilate(probMap, input, radius, radius) : probMap;
 
-    return connectedComponents(mask, input, this.opts.components).map((component) => {
+    const lines = connectedComponents(mask, input, this.opts.components).map((component) => {
       // Model space -> source bitmap space. Per-axis, because stride rounding
       // makes the two scales slightly different.
       const scaled = {
@@ -160,6 +186,11 @@ export class PpOcrDetector implements TextDetector {
       const rect = expandBox(scaled, this.opts.expandRatio, source);
       return { rect, score: component.score, direction: detectDirection(rect, dirOpts) };
     });
+
+    // Deduplicate here, before grouping: two boxes over one line would otherwise
+    // survive as one block with a doubled bounding box, and the crop sent for
+    // recognition would be subtly wrong rather than obviously duplicated.
+    return suppressOverlaps(lines, this.opts.nmsIou);
   }
 
   dispose(): void {
