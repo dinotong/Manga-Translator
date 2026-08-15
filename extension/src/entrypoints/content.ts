@@ -1,8 +1,9 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { acquire } from '../content/acquire';
 import { Overlay } from '../content/overlay/overlay';
-import { elementKey, isLoaded, isPageCandidate, scanImages } from '../content/scan';
+import { elementKey, isLoaded, isPageCandidate, pageShape, scanImages } from '../content/scan';
 import { profileFor } from '../content/site-profiles';
+import { classifyPage } from '../core/page-kind';
 import { MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
 import { isAutoOn, siteKey } from '../core/site-scope';
 import { toErrorPayload } from '../shared/errors';
@@ -121,14 +122,46 @@ export default defineContentScript({
     let lastContextTarget: HTMLImageElement | null = null;
 
     /**
-     * Is anything allowed to happen here without the reader asking?
+     * Is this site switched on at all?
      *
      * Two switches, deliberately different in kind: `enabled` is the global kill
      * switch, and `autoSites` says this particular site was opted in. A site
      * nobody opted in is off, so on the overwhelming majority of pages in the
      * browser this is false and nothing below ever runs.
      */
-    const auto = (): boolean => settings.enabled && isAutoOn(settings.autoSites, site);
+    const siteOn = (): boolean => settings.enabled && isAutoOn(settings.autoSites, site);
+
+    /**
+     * Is the reader *reading*, or *choosing*?
+     *
+     * A cover on a listing page is a manga image by every measure the per-image
+     * scorer has, so the scorer waves it through — and the result was quota
+     * spent on cover art and translation boxes painted over the very thumbnails
+     * being browsed. The question can only be answered one level up, about the
+     * page.
+     *
+     * Recomputed on demand and remembered only for the current task. The verdict
+     * genuinely changes underneath us: this script starts at document_idle when
+     * MangaDex has inserted its page elements but decoded none of them, so the
+     * only honest first answer is "no", and it has to become "yes" the moment
+     * `load` fires. Caching it for any longer than one turn of the event loop is
+     * how the gate would silently stop a page that was about to work.
+     */
+    let readerVerdict: boolean | null = null;
+    function onReaderPage(): boolean {
+      if (readerVerdict !== null) return readerVerdict;
+      // A profile that knows the site is the whole answer, both ways: we are not
+      // guessing about imhentai's /gallery/ or MangaDex's /title/.
+      const known = profile.isReaderPage?.(new URL(location.href));
+      readerVerdict = known ?? classifyPage(pageShape(profile)) === 'reader';
+      queueMicrotask(() => {
+        readerVerdict = null;
+      });
+      return readerVerdict;
+    }
+
+    /** Is anything allowed to happen here without the reader asking? */
+    const auto = (): boolean => siteOn() && onReaderPage();
     const srcOf = (img: HTMLImageElement): string => img.currentSrc || img.src;
 
     /* ---------------- scheduling ---------------- */
@@ -529,9 +562,14 @@ export default defineContentScript({
     const ROOT_MARGIN = { above: 2, below: 1 };
     const io = new IntersectionObserver(
       (entries) => {
+        // Asked once for the batch: the page-kind half of `auto()` measures every
+        // candidate on the page, and a listing can deliver dozens of entries at
+        // a time.
+        const on = auto();
+        if (!on) return;
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
-          if (auto()) enqueue(entry.target as HTMLImageElement);
+          enqueue(entry.target as HTMLImageElement);
         }
       },
       { rootMargin: `${ROOT_MARGIN.above * 100}% 0px ${ROOT_MARGIN.below * 100}% 0px`, threshold: 0.01 },
@@ -566,9 +604,10 @@ export default defineContentScript({
     }
 
     function rescan(): void {
+      const on = auto();
       for (const img of scanImages(profile, { includeUnloaded: true })) {
         watch(img);
-        if (!auto() || !isLoaded(img) || !isPageCandidate(img, profile)) continue;
+        if (!on || !isLoaded(img) || !isPageCandidate(img, profile)) continue;
         const r = img.getBoundingClientRect();
         // A preloaded page sitting at 0x0 never intersects, but it is exactly
         // the page the user is about to open — so translate it now and the page
@@ -585,6 +624,7 @@ export default defineContentScript({
 
     const mo = new MutationObserver((records) => {
       let structural = false;
+      const on = auto();
       for (const r of records) {
         if (r.type === 'attributes') {
           const img = r.target;
@@ -609,7 +649,7 @@ export default defineContentScript({
           if (job) detach(img, job);
 
           watch(img);
-          if (auto()) enqueue(img); // parked until `load`, then run
+          if (on) enqueue(img); // parked until `load`, then run
         } else if (r.type === 'childList' && r.addedNodes.length > 0) {
           structural = true;
         }
@@ -669,6 +709,12 @@ export default defineContentScript({
     for (const evt of ['popstate', 'mt:navigate']) {
       addEventListener(evt, () => {
         revalidate();
+        // MangaDex goes from a title page to a chapter without ever reloading
+        // this script, so the reader/listing answer changes here and nowhere
+        // else. The prefetch timer follows it: guessing at the next page number
+        // while the reader is browsing covers is a request nobody asked for.
+        if (auto()) startPrefetch();
+        else stopPrefetch();
         debounceRescan();
       });
     }
@@ -719,12 +765,16 @@ export default defineContentScript({
         }
       } else if (msg?.t === 'SETTINGS_CHANGED') {
         void loadSettings().then((next) => {
-          const wasOn = auto();
+          const wasOn = siteOn();
           settings = next;
           // Either switch going off stops everything here, including the
           // overlays already drawn: the reader just said "not on this site",
           // and leaving the last page's translation up is not what that means.
-          if (!auto()) {
+          //
+          // Keyed on the *switch*, not on `auto()`. Being on a listing page is
+          // not the reader turning anything off — the observers stay up so that
+          // clicking through to a chapter starts working without a reload.
+          if (!siteOn()) {
             stopObserving();
             return;
           }
@@ -748,8 +798,10 @@ export default defineContentScript({
     // Nothing is observed, scanned or timed on a site the reader has not opted
     // in. The script stays resident only to answer the right-click menu and the
     // popup's "translate this page now", which cost nothing until used.
-    if (auto()) startObserving();
-    log.info(`observing=${observing} auto=${auto()} prefetch=${Boolean(profile.prefetch)}`);
+    if (siteOn()) startObserving();
+    log.info(
+      `observing=${observing} site=${siteOn()} reader=${onReaderPage()} prefetch=${Boolean(profile.prefetch)}`,
+    );
 
     function nearViewport(r: DOMRect): boolean {
       const h = window.innerHeight;

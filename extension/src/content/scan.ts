@@ -1,3 +1,4 @@
+import type { PageShape } from '../core/page-kind';
 import { PASS_SCORE, scoreCandidate } from '../core/scoring';
 import type { SiteProfile } from './site-profiles';
 
@@ -49,6 +50,25 @@ export function scanImages(
     }
     return isPageCandidate(img, profile);
   });
+}
+
+/**
+ * Measure the page for core/page-kind.ts.
+ *
+ * The candidates are exactly what the per-image pass already accepted, so the
+ * page-level rule is judging the same images the pipeline would have worked on
+ * — not every picture on the page. Reading `getBoundingClientRect` here forces
+ * layout, which is why the caller memoises the verdict for one task rather than
+ * asking per element.
+ */
+export function pageShape(profile: SiteProfile): PageShape {
+  return {
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    candidates: scanImages(profile).map((img) => {
+      const r = img.getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    }),
+  };
 }
 
 /** An image with no intrinsic size has not decoded yet; there is nothing to hash. */

@@ -49,3 +49,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Packed builds handed to friends (rebuildable, 27 MB)
+*.rar

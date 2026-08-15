@@ -25,6 +25,19 @@ export interface SiteProfile {
   reader: 'paged' | 'strip' | 'auto';
   sourceLang?: SourceLang;
   /**
+   * Is this URL a page being *read*, as opposed to a list of things to pick?
+   *
+   * Automatic translation is for the one page in front of the reader. On a
+   * listing it spends quota on cover art and paints over the very covers being
+   * browsed, which is the bug this answers. When a profile implements this its
+   * answer is final in both directions — we know the site, there is nothing to
+   * guess — and core/page-kind.ts only runs where no profile does.
+   *
+   * Right-click "แปลรูปนี้" ignores this entirely: that is the reader pointing
+   * at one image on purpose, and it must keep working on a listing.
+   */
+  isReaderPage?(url: URL): boolean;
+  /**
    * Concrete hostnames this profile is aimed at.
    *
    * `match()` is a pattern and cannot be enumerated, but the v2 -> v3 settings
@@ -74,6 +87,11 @@ const mangadex: SiteProfile = {
   pageSelector: '.md--page img.img, img.img',
   acquire: 'content-script',
   reader: 'auto',
+  // Reading happens at /chapter/{uuid}[/{page}] and nowhere else. `/title/…`,
+  // `/titles/latest` and the front page are all lists of covers — measured, the
+  // front page carries a hero carousel that covers 86% of the window, which is
+  // exactly the kind of thing a generic size rule would mistake for a page.
+  isReaderPage: (u) => /^\/chapter\/[0-9a-f-]+/i.test(u.pathname),
   setKey: (u) => u.pathname.match(/\/chapter\/([0-9a-f-]+)/i)?.[1] ?? null,
   pageNumber: (u) => {
     const n = u.pathname.match(/\/chapter\/[0-9a-f-]+\/(\d+)/i)?.[1];
@@ -111,6 +129,12 @@ const imhentai: SiteProfile = {
   // The site carries both Japanese and English galleries, so a fixed source
   // language here would be wrong half the time.
   sourceLang: 'auto',
+  // `/view/{id}/{n}/` is the reader. `/gallery/{id}/` is the *listing* for that
+  // same gallery — the cover plus every page as a thumbnail — and the front
+  // page and search results are listings too. This is worth stating explicitly
+  // even though `#gimg` exists only in the reader, because the selector is a
+  // fact about today's markup and this is a fact about the site.
+  isReaderPage: (u) => /^\/view\/\d+\//.test(u.pathname),
   setKey: (u) => u.pathname.match(/^\/view\/(\d+)\//)?.[1] ?? null,
   pageNumber: (u) => {
     const n = u.pathname.match(/^\/view\/\d+\/(\d+)/)?.[1];

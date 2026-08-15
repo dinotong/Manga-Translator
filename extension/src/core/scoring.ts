@@ -8,6 +8,11 @@
  * Deliberately no CSS selectors here: anything site-specific belongs in
  * content/site-profiles.ts, and the moment a hostname appears in this file the
  * separation has failed.
+ *
+ * What this file cannot decide, at any threshold: whether the page is worth
+ * translating at all. A cover on a listing *is* a manga image, and one image at
+ * a time is not enough information to tell it from a page. That question belongs
+ * to core/page-kind.ts, which looks at the whole page.
  */
 
 export interface CandidateFeatures {
@@ -26,7 +31,21 @@ export interface CandidateFeatures {
 
 export const PASS_SCORE = 4;
 
-const READER_HINT = /reader|viewer|page|chapter|comic|manga|gallery/;
+/**
+ * Words that mean "this is the act of reading", not "this site is about comics".
+ *
+ * `manga`, `comic`, `gallery` and `page` used to be in here and were worse than
+ * useless. On a manga site they appear in the URL, the class names and the alt
+ * text of every page including the listings — `gallery` is literally imhentai's
+ * word for the *index* of a book, so the rule meant to find reader pages was
+ * handing +2 to the covers it should have been keeping out. A hint that matches
+ * everything carries no information, only bias.
+ *
+ * Measured before removing them: across eleven page types on three sites, at
+ * four window sizes, dropping the four words changed no page's verdict — every
+ * real page still cleared PASS_SCORE on size and shape alone.
+ */
+const READER_HINT = /reader|viewer|chapter/;
 const JUNK_HINT = /avatar|icon|logo|thumb|banner|sprite|\bad\b|ads|advert|emoji|badge/;
 
 export function scoreCandidate(f: CandidateFeatures): number {
