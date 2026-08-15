@@ -53,7 +53,58 @@ const REAL_PER_MINUTE = JSON.stringify({
   },
 });
 
-/** Same envelope, per-day quota id. Google's naming differs only in that word. */
+/**
+ * A second capture, taken independently later the same day by firing 18
+ * requests at the same model until three came back 429.
+ *
+ * Kept alongside the first because it is the evidence that the shape above was
+ * observed rather than imagined: same envelope, same `quotaId`, same
+ * `quotaValue`, Help detail still first and RetryInfo still last — and a
+ * different delay, which is the part that varies and therefore the part no test
+ * may hardcode an expectation about beyond "it was read correctly".
+ */
+const REAL_PER_MINUTE_2 = JSON.stringify({
+  error: {
+    code: 429,
+    message:
+      'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 15, model: gemini-3.5-flash-lite\nPlease retry in 57.359612648s.',
+    status: 'RESOURCE_EXHAUSTED',
+    details: [
+      {
+        '@type': 'type.googleapis.com/google.rpc.Help',
+        links: [
+          {
+            description: 'Learn more about Gemini API quotas',
+            url: 'https://ai.google.dev/gemini-api/docs/rate-limits',
+          },
+        ],
+      },
+      {
+        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+        violations: [
+          {
+            quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+            quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+            quotaDimensions: { location: 'global', model: 'gemini-3.5-flash-lite' },
+            quotaValue: '15',
+          },
+        ],
+      },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '57s' },
+    ],
+  },
+});
+
+/**
+ * Same envelope, per-day quota id.
+ *
+ * This one is *constructed*, not captured: reaching it costs 1,000 requests.
+ * The id is not invented though — `GenerateRequestsPerDayPerProjectPerModel-FreeTier`
+ * is the string other people have reported receiving (google-gemini/gemini-cli
+ * issue #9248). If Google ever renames it, `scopeOf` still catches anything
+ * containing "PerDay", and an unrecognised body falls back to per-minute, which
+ * is the cheap direction to be wrong in.
+ */
 const PER_DAY = JSON.stringify({
   error: {
     code: 429,
@@ -81,6 +132,25 @@ describe('classifyQuotaError', () => {
     expect(v.retryAfterMs).toBe(30_000);
     expect(v.limit).toBe(15);
     expect(v.quotaId).toBe('GenerateRequestsPerMinutePerProjectPerModel-FreeTier');
+  });
+
+  it('reads a second, independently captured per-minute 429 the same way', () => {
+    // The two live bodies differ only in the retry delay, so anything that
+    // classified one and not the other would be keying off the wrong field.
+    const v = classifyQuotaError(REAL_PER_MINUTE_2);
+    expect(v.scope).toBe('per-minute');
+    expect(v.limit).toBe(15);
+    expect(v.quotaId).toBe('GenerateRequestsPerMinutePerProjectPerModel-FreeTier');
+    expect(v.retryAfterMs).toBe(57_000);
+  });
+
+  it('never rotates a key on a per-minute body, however it is worded', () => {
+    // The whole point of the file: a fast reader trips 15 RPM constantly, and a
+    // ring that advanced on it would walk through every key they own in
+    // seconds. Only a per-day verdict may advance.
+    for (const body of [REAL_PER_MINUTE, REAL_PER_MINUTE_2]) {
+      expect(classifyQuotaError(body).scope).not.toBe('per-day');
+    }
   });
 
   it('reads a per-day quotaId as per-day', () => {
