@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Direction, TextLine } from '../types';
-import { groupLinesIntoBlocks, readingOrder, shouldMerge } from './grouping';
+import { groupLinesIntoBlocks, readingOrder, shouldMerge, thresholdsFor } from './grouping';
 import { GROUPING_DEFAULTS } from './grouping';
 
 /** A vertical column of Japanese text: narrow and tall. */
@@ -135,5 +135,42 @@ describe('readingOrder', () => {
   it('passes single and empty inputs through', () => {
     expect(readingOrder([], true)).toEqual([]);
     expect(readingOrder(groupLinesIntoBlocks([col(0, 0)]), true)).toHaveLength(1);
+  });
+});
+
+describe('thresholdsFor', () => {
+  it('gives Japanese the shared defaults', () => {
+    expect(thresholdsFor('ja')).toEqual(GROUPING_DEFAULTS);
+  });
+
+  it('lets an emphasised Latin word stay in its sentence', () => {
+    // "I can't BELIEVE it" — the shouted word is set larger than the rest of the
+    // same balloon. At the Japanese ratio it is judged a separate block and the
+    // sentence reaches the translator in pieces.
+    const body = row(10, 100, 200, 20, 0.9);
+    const shouted = row(10, 126, 200, 42, 0.9); // 2.1x the cap height
+
+    expect(shouldMerge(body, shouted, thresholdsFor('ja').horizontal)).toBe(false);
+    expect(shouldMerge(body, shouted, thresholdsFor('en').horizontal)).toBe(true);
+  });
+
+  it('still refuses a Latin size jump big enough to be a sound effect', () => {
+    const body = row(10, 100, 200, 20, 0.9);
+    const sfx = row(10, 130, 200, 90, 0.9); // 4.5x — not dialogue
+
+    expect(shouldMerge(body, sfx, thresholdsFor('en').horizontal)).toBe(false);
+  });
+
+  it('leaves vertical thresholds alone for every language', () => {
+    // The override is about how Latin sets emphasis; nothing about it should
+    // reach the column-merging rules that Japanese depends on.
+    for (const lang of ['ja', 'en', 'ko', 'zh'] as const) {
+      expect(thresholdsFor(lang).vertical).toEqual(GROUPING_DEFAULTS.vertical);
+    }
+  });
+
+  it('defaults to Japanese when the caller passes no language', () => {
+    const cols = [col(200, 40), col(164, 40)];
+    expect(groupLinesIntoBlocks(cols)).toEqual(groupLinesIntoBlocks(cols, 'ja'));
   });
 });

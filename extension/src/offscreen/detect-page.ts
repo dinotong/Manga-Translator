@@ -65,7 +65,10 @@ export async function detectPage(
   const tDetect = performance.now() - t1;
 
   const t2 = performance.now();
-  const blocks = readingOrder(groupLinesIntoBlocks(lines), options.rtl);
+  const blocks = readingOrder(
+    groupLinesIntoBlocks(lines, resolveDetectionLang(options.lang)),
+    options.rtl,
+  );
   const tGroup = performance.now() - t2;
 
   const detToRec = plan.rec.w / plan.det.w;

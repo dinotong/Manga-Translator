@@ -1,4 +1,4 @@
-import type { Direction, PixRect, TextBlock, TextLine } from '../types';
+import type { Direction, LangCode, PixRect, TextBlock, TextLine } from '../types';
 import { blockDirection, glyphSize } from './direction';
 import { gap1d, overlapRatio, unionAll } from './geometry';
 
@@ -37,6 +37,36 @@ export const GROUPING_DEFAULTS: Record<Direction, GroupingThresholds> = {
   // gap before calling it a separate block.
   horizontal: { maxSizeRatio: 1.7, minAxisOverlap: 0.4, maxPerpGapRatio: 1.8, minScore: 0.5 },
 };
+
+/**
+ * Per-language adjustments on top of the per-direction defaults.
+ *
+ * Latin comics enlarge or embolden individual words for emphasis constantly,
+ * inside a sentence that is otherwise one size — "I can't BELIEVE it". At the
+ * shared 1.7 ratio the emphasised word is judged a different block, so the
+ * sentence reaches the translator in pieces and comes back as pieces. Japanese
+ * leans on other devices for emphasis far more than on size, so it keeps the
+ * tighter value, where a genuine size jump usually does mean a sound effect
+ * that should not be merged into dialogue.
+ *
+ * Only the difference that can be argued from how the scripts are actually set
+ * is listed here. Everything else stays shared until a real page shows it
+ * needs to differ — a threshold invented without evidence is just a number
+ * nobody dares change later.
+ */
+const LANG_OVERRIDES: Partial<Record<LangCode, Partial<Record<Direction, Partial<GroupingThresholds>>>>> =
+  {
+    en: { horizontal: { maxSizeRatio: 2.3 } },
+  };
+
+/** Thresholds for one language, merged over the per-direction defaults. */
+export function thresholdsFor(lang: LangCode): Record<Direction, GroupingThresholds> {
+  const per = LANG_OVERRIDES[lang] ?? {};
+  return {
+    vertical: { ...GROUPING_DEFAULTS.vertical, ...per.vertical },
+    horizontal: { ...GROUPING_DEFAULTS.horizontal, ...per.horizontal },
+  };
+}
 
 /** Reading axis = the direction text flows. Perp axis = how lines stack. */
 function axes(rect: PixRect, direction: Direction) {
@@ -98,11 +128,13 @@ class UnionFind {
  */
 export function groupLinesIntoBlocks(
   lines: readonly TextLine[],
+  lang: LangCode = 'ja',
   overrides: Partial<Record<Direction, Partial<GroupingThresholds>>> = {},
 ): TextBlock[] {
+  const base = thresholdsFor(lang);
   const thresholds: Record<Direction, GroupingThresholds> = {
-    vertical: { ...GROUPING_DEFAULTS.vertical, ...overrides.vertical },
-    horizontal: { ...GROUPING_DEFAULTS.horizontal, ...overrides.horizontal },
+    vertical: { ...base.vertical, ...overrides.vertical },
+    horizontal: { ...base.horizontal, ...overrides.horizontal },
   };
 
   const kept = lines.filter((l) => l.score >= thresholds[l.direction].minScore);
