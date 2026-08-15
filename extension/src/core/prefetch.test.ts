@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { clampLookahead, MIN_PREFETCH_GAP_MS, pickPrefetch, type PrefetchInput } from './prefetch';
+import {
+  clampLookahead,
+  MAX_CONSECUTIVE_MISSES,
+  MIN_PREFETCH_GAP_MS,
+  pickPrefetch,
+  type PrefetchInput,
+} from './prefetch';
 
 /** A state where prefetch is allowed, so each test can break exactly one rule. */
 function ok(patch: Partial<PrefetchInput> = {}): PrefetchInput {
@@ -8,8 +14,9 @@ function ok(patch: Partial<PrefetchInput> = {}): PrefetchInput {
     enabled: true,
     lookahead: 3,
     visible: true,
-    idle: true,
+    foregroundWaiting: false,
     inFlight: 0,
+    consecutiveMisses: 0,
     lastStartAt: 0,
     currentPage: 5,
     totalPages: 40,
@@ -71,8 +78,21 @@ describe('pickPrefetch', () => {
     expect(pickPrefetch(ok({ visible: false }))).toBeNull();
   });
 
-  it('never queues ahead of the page the reader is looking at', () => {
-    expect(pickPrefetch(ok({ idle: false }))).toBeNull();
+  it('never queues ahead of a visible page that is still waiting for a slot', () => {
+    expect(pickPrefetch(ok({ foregroundWaiting: true }))).toBeNull();
+  });
+
+  it('runs while the visible page is being worked on — that is the whole point', () => {
+    // The old rule was "wait until nothing is running". Measured on the real
+    // site, that meant a guess could only start about a second before the reader
+    // turned the page, so it was never ready in time. See D-027.
+    expect(pickPrefetch(ok({ foregroundWaiting: false }))).toBe(6);
+  });
+
+  it('gives up on a gallery after two wrong guesses in a row', () => {
+    expect(pickPrefetch(ok({ consecutiveMisses: 1 }))).toBe(6);
+    expect(pickPrefetch(ok({ consecutiveMisses: MAX_CONSECUTIVE_MISSES }))).toBeNull();
+    expect(pickPrefetch(ok({ consecutiveMisses: 7 }))).toBeNull();
   });
 
   it('does nothing when auto translate is off', () => {

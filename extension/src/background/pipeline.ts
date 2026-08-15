@@ -6,7 +6,7 @@ import { textHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
 import type { JobSource, OverlayBlock, Stage } from '../shared/messages';
 import type { Settings } from '../shared/settings';
-import { GeminiProvider } from '../translation/GeminiProvider';
+import { KeyRing } from '../translation/KeyRing';
 import { fetchImage } from './image-fetch';
 import { callOffscreen } from './offscreen-manager';
 
@@ -39,19 +39,25 @@ export async function runJob(
   const from = settings.lang.source;
   const to = settings.lang.target;
 
-  if (!settings.translation.gemini.apiKey.trim()) {
-    throw new PipelineError('NO_API_KEY', 'no Gemini API key configured');
-  }
-  const gemini = new GeminiProvider({
-    apiKey: settings.translation.gemini.apiKey,
-    model: settings.translation.gemini.model,
-    safetyOff: settings.translation.gemini.safetyOff,
-    from,
-    to,
-    ...(source.setKey && settings.translation.contextBubbles > 0
-      ? { context: (recentContext.get(source.setKey) ?? []).slice(-settings.translation.contextBubbles) }
-      : {}),
-  });
+  const gemini = await KeyRing.create(
+    settings,
+    {
+      from,
+      to,
+      ...(source.setKey && settings.translation.contextBubbles > 0
+        ? { context: (recentContext.get(source.setKey) ?? []).slice(-settings.translation.contextBubbles) }
+        : {}),
+    },
+    {
+      // A prefetch never waits out a per-minute limit. Jobs are serialised, so
+      // parking a speculative page for 30 seconds also parks the page the
+      // reader is actually looking at — the exact inversion prefetch exists to
+      // avoid. It just fails; nobody is waiting for it.
+      maxWaitMs: source.prefetch ? 0 : 45_000,
+      onWait: (ms) =>
+        onProgress('translate', `โควตาต่อนาทีเต็ม — รอ ${Math.ceil(ms / 1000)} วินาที`),
+    },
+  );
 
   /* ---- 1. bytes ---- */
   onProgress('acquire');
@@ -190,7 +196,7 @@ export async function runJob(
  */
 async function translateCached(
   records: readonly OcrBlockRecord[],
-  gemini: GeminiProvider,
+  gemini: KeyRing,
   settings: Settings,
   signal?: AbortSignal,
 ): Promise<OverlayBlock[]> {

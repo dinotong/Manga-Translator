@@ -1,3 +1,5 @@
+import type { QuotaVerdict } from '../core/quota';
+
 /**
  * Error codes the UI can act on.
  *
@@ -10,6 +12,8 @@ export type ErrCode =
   | 'NO_API_KEY'
   | 'INVALID_KEY'
   | 'QUOTA_EXCEEDED'
+  /** Every configured key is out of daily quota. Distinct from one key failing. */
+  | 'ALL_KEYS_EXHAUSTED'
   | 'PROVIDER_REFUSED'
   | 'OFFLINE'
   | 'ACQUIRE_FAILED'
@@ -25,6 +29,16 @@ export class PipelineError extends Error {
   readonly code: ErrCode;
   /** A hint the user can actually follow, in Thai. */
   readonly hint: string;
+  /**
+   * Set on QUOTA_EXCEEDED only.
+   *
+   * Gemini answers 429 both for the 15-per-minute limit and the 1,000-per-day
+   * one, and the key ring must not confuse them: rotating on a per-minute 429
+   * would spend every key the user owns inside a few seconds of fast reading.
+   * The verdict does not survive the message port, and does not need to — it is
+   * consumed in the worker, before the error is reported to a tab.
+   */
+  quota?: QuotaVerdict;
 
   constructor(code: ErrCode, message: string, hint = '') {
     super(message);
@@ -38,6 +52,8 @@ export const HINTS_TH: Record<ErrCode, string> = {
   NO_API_KEY: 'ยังไม่ได้ใส่ Gemini API key — เปิดหน้าตั้งค่าแล้ววาง key',
   INVALID_KEY: 'API key ใช้ไม่ได้ — ตรวจว่าคัดลอกครบและเปิดใช้ Generative Language API แล้ว',
   QUOTA_EXCEEDED: 'โควตา Gemini เต็ม (ฟรี 15 ครั้ง/นาที · 1,000 ครั้ง/วัน) — รอสักครู่แล้วลองใหม่',
+  ALL_KEYS_EXHAUSTED:
+    'โควตารายวันหมดครบทุก key แล้ว — เพิ่ม key สำรองในหน้าตั้งค่า หรือรอจนถึงเวลารีเซ็ต (เที่ยงคืนเวลาแปซิฟิก)',
   PROVIDER_REFUSED: 'Gemini ปฏิเสธหน้านี้ — ลองกดแปลใหม่ ระบบจะแยกส่งทีละกล่อง',
   OFFLINE: 'ต่อเน็ตไม่ได้ — ตรวจการเชื่อมต่อแล้วลองใหม่',
   ACQUIRE_FAILED: 'ดึงไฟล์รูปไม่สำเร็จ — เว็บอาจบล็อกหรือรูปยังโหลดไม่เสร็จ ลองรีเฟรชหน้า',

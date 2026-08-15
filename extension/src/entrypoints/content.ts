@@ -3,13 +3,14 @@ import { acquire } from '../content/acquire';
 import { Overlay } from '../content/overlay/overlay';
 import { elementKey, isLoaded, isPageCandidate, scanImages } from '../content/scan';
 import { profileFor } from '../content/site-profiles';
-import { pickPrefetch } from '../core/prefetch';
+import { MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
 import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import {
   type ContentToSw,
   type JobSource,
   PORT_NAME,
+  type Stage,
   type SwToContent,
   type SwToTab,
 } from '../shared/messages';
@@ -46,14 +47,33 @@ export default defineContentScript({
 
     const overlay = new Overlay(settings);
 
-    /** One attempt at one image. `img` is null for a speculative prefetch. */
+    /**
+     * One attempt at one image.
+     *
+     * Identity is the *source* being read, not the element showing it. imhentai
+     * runs a whole gallery through one `<img id="gimg">`, and by the time the
+     * reader turns to a page it is often already being fetched speculatively —
+     * so "is this work already happening?" can only be answered by what is being
+     * fetched. Asking the element instead is what made every page turn start a
+     * second identical job and wait for it.
+     */
     interface Job {
       id: string;
-      img: HTMLImageElement | null;
-      src: string;
+      /** currentSrc of the page being read, or the guessed URL of a prefetch. */
+      key: string;
+      /** Elements waiting for this result. Empty means nobody is looking yet. */
+      imgs: Set<HTMLImageElement>;
+      /** Never claimed by an element: rate-limited, and silent when it fails. */
+      speculative: boolean;
+      /** Gallery page a speculative job was guessed for; null for real work. */
+      page: number | null;
+      /** Last stage reported, so an element that joins late shows the truth. */
+      stage: Stage;
     }
 
     const active = new Map<string, Job>();
+    /** The one registry of work in flight, keyed by what is being fetched. */
+    const byKey = new Map<string, Job>();
     const byImg = new Map<HTMLImageElement, Job>();
     /** Last src each element was successfully translated at. */
     const done = new WeakMap<HTMLImageElement, string>();
@@ -102,14 +122,46 @@ export default defineContentScript({
 
       const current = byImg.get(img);
       if (current) {
-        if (current.src === src && !manual) return;
+        if (current.key === src && !manual) return;
         // The page turned while this was in flight. Finishing it would spend a
         // request from a 1,000/day budget on a page the reader has left.
-        cancel(current);
+        detach(img, current);
+      }
+
+      // Someone is already fetching exactly this image — the prefetcher, or
+      // another element showing the same page. Joining that job is the whole
+      // point of prefetching: the answer is already on its way.
+      const running = byKey.get(src);
+      if (running && !manual) {
+        adopt(running, img);
+        return;
       }
 
       if (!queue.includes(img)) queue.push(img);
       pump();
+    }
+
+    /** Attach an element to work that is already in flight. */
+    function adopt(job: Job, img: HTMLImageElement): void {
+      if (job.speculative) log.debug(`adopted prefetch of page ${job.page} — the reader arrived`);
+      // No longer a guess: someone is looking at it. That also frees the single
+      // speculative slot for the next page ahead.
+      job.speculative = false;
+      job.imgs.add(img);
+      byImg.set(img, job);
+      overlay.status(img, `${stageLabel(job.stage)}…`);
+    }
+
+    /**
+     * This element is no longer waiting on this job.
+     *
+     * When it was the last one, the job is work nobody wants — the reader turned
+     * away — so it is cancelled rather than left to spend a request (D-024).
+     */
+    function detach(img: HTMLImageElement, job: Job): void {
+      job.imgs.delete(img);
+      if (byImg.get(img) === job) byImg.delete(img);
+      if (job.imgs.size === 0 && !job.speculative) cancel(job);
     }
 
     function pump(): void {
@@ -135,8 +187,25 @@ export default defineContentScript({
     }
 
     async function run(img: HTMLImageElement): Promise<void> {
-      const job: Job = { id: `j${++jobCounter}`, img, src: srcOf(img) };
+      const key = srcOf(img);
+
+      // The prefetcher may have started this page while it sat in the queue.
+      const running = byKey.get(key);
+      if (running) {
+        adopt(running, img);
+        return;
+      }
+
+      const job: Job = {
+        id: `j${++jobCounter}`,
+        key,
+        imgs: new Set([img]),
+        speculative: false,
+        page: null,
+        stage: 'acquire',
+      };
       active.set(job.id, job);
+      byKey.set(key, job);
       byImg.set(img, job);
       overlay.status(img, 'กำลังอ่านภาพ…');
 
@@ -145,7 +214,7 @@ export default defineContentScript({
         const got = await acquire(img, profile);
         source = {
           elementKey: elementKey(img),
-          url: got.kind === 'url' ? got.url : job.src,
+          url: got.kind === 'url' ? got.url : job.key,
           natural: got.natural,
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
@@ -174,11 +243,11 @@ export default defineContentScript({
     /** Forget a job and release whatever is waiting on it. */
     function settle(job: Job): void {
       active.delete(job.id);
-      if (job.img && byImg.get(job.img)?.id === job.id) byImg.delete(job.img);
-      if (prefetchJob?.id === job.id) {
-        prefetchJob = null;
-        prefetchInFlight = 0;
+      if (byKey.get(job.key)?.id === job.id) byKey.delete(job.key);
+      for (const img of job.imgs) {
+        if (byImg.get(img)?.id === job.id) byImg.delete(img);
       }
+      job.imgs.clear();
       waiters.get(job.id)?.();
       waiters.delete(job.id);
     }
@@ -192,22 +261,41 @@ export default defineContentScript({
 
     /** Pages already fetched, in flight, or attempted. Absolute gallery numbers. */
     const prefetchCovered = new Set<number>();
-    let prefetchInFlight = 0;
     let prefetchLastStart = 0;
-    let prefetchJob: Job | null = null;
+    /** Guesses in a row that came back as "no such image" — see MAX_CONSECUTIVE_MISSES. */
+    let prefetchMisses = 0;
+    /** Gallery the two counters above belong to. */
+    let prefetchSet: string | null = null;
+
+    function speculativeInFlight(): number {
+      let n = 0;
+      for (const job of active.values()) if (job.speculative) n++;
+      return n;
+    }
 
     function prefetchTick(): void {
       const cfg = profile.prefetch;
       if (!cfg) return;
 
-      const page = profile.pageNumber?.(new URL(location.href)) ?? null;
+      const url = new URL(location.href);
+      const setKey = profile.setKey?.(url) ?? null;
+      if (setKey !== prefetchSet) {
+        // Another gallery: its own numbering, its own file extensions, and its
+        // own chance of the URL pattern holding.
+        prefetchSet = setKey;
+        prefetchCovered.clear();
+        prefetchMisses = 0;
+      }
+
+      const page = profile.pageNumber?.(url) ?? null;
       const pick = pickPrefetch({
         now: Date.now(),
         enabled: auto(),
         lookahead: settings.performance.prefetchLookahead,
         visible: document.visibilityState === 'visible',
-        idle: running === 0 && queue.length === 0,
-        inFlight: prefetchInFlight,
+        foregroundWaiting: queue.length > 0,
+        inFlight: speculativeInFlight(),
+        consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
         currentPage: page,
         totalPages: cfg.total(document),
@@ -216,27 +304,38 @@ export default defineContentScript({
       if (pick === null || page === null) return;
 
       const shown = scanImages(profile).find(isLoaded);
-      const url = shown ? cfg.imageUrl(srcOf(shown), pick - page) : null;
-      if (!url) return;
+      const guess = shown ? cfg.imageUrl(srcOf(shown), pick - page) : null;
+      if (!guess) return;
+      if (byKey.has(guess)) {
+        // The reader is already on it, or another element asked for it first.
+        prefetchCovered.add(pick);
+        return;
+      }
 
       // Marked covered before the request, so a failure is not retried in a loop.
       prefetchCovered.add(pick);
-      prefetchInFlight = 1;
       prefetchLastStart = Date.now();
 
-      const job: Job = { id: `p${++jobCounter}`, img: null, src: url };
+      const job: Job = {
+        id: `p${++jobCounter}`,
+        key: guess,
+        imgs: new Set(),
+        speculative: true,
+        page: pick,
+        stage: 'acquire',
+      };
       active.set(job.id, job);
-      prefetchJob = job;
+      byKey.set(guess, job);
       log.debug(`prefetch page ${pick}`);
       send({
         t: 'RUN',
         jobId: job.id,
         source: {
           elementKey: `prefetch-${pick}`,
-          url,
+          url: guess,
           natural: { w: 0, h: 0 },
           pageUrl: location.href,
-          setKey: profile.setKey?.(new URL(location.href)) ?? null,
+          setKey,
           prefetch: true,
         },
       });
@@ -248,8 +347,10 @@ export default defineContentScript({
     document.addEventListener('visibilitychange', () => {
       // "Stop when the tab is hidden" has to mean the request already running,
       // not just the next one. A backgrounded tab that keeps pulling pages is
-      // indistinguishable from a crawler.
-      if (document.visibilityState !== 'visible' && prefetchJob) cancel(prefetchJob);
+      // indistinguishable from a crawler. Work an element is waiting for stays:
+      // the reader asked for that one and will see it when they come back.
+      if (document.visibilityState === 'visible') return;
+      for (const job of Array.from(active.values())) if (job.speculative) cancel(job);
     });
 
     /* ---------------- port ---------------- */
@@ -291,10 +392,11 @@ export default defineContentScript({
       // built to prevent.
       const job = active.get(msg.jobId);
       if (!job) return;
-      const img = job.img;
 
       if (msg.t === 'PROGRESS') {
-        if (img) overlay.status(img, `${stageLabel(msg.stage)}${msg.detail ? ` · ${msg.detail}` : ''}`);
+        job.stage = msg.stage;
+        const text = `${stageLabel(msg.stage)}${msg.detail ? ` · ${msg.detail}` : ''}`;
+        for (const img of job.imgs) overlay.status(img, text);
         return;
       }
 
@@ -302,17 +404,18 @@ export default defineContentScript({
         // Keyed by image hash, so it is worth keeping whatever page it came from
         // — including a prefetch, whose entire purpose is to be waiting here.
         overlay.setResult(msg.hash, msg.natural, msg.blocks);
+        // The guessed URL was a real image, so the pattern holds for this book.
+        if (job.speculative) prefetchMisses = 0;
 
-        if (img) {
-          const shown = srcOf(img);
-          if (shown !== job.src) {
+        const stale: HTMLImageElement[] = [];
+        for (const img of job.imgs) {
+          if (srcOf(img) !== job.key) {
             // The page turned while this was in flight. Drawing it now would put
             // the previous page's dialogue on the page in front of the reader,
             // which is worse than no translation because it cannot be noticed.
             log.debug('result arrived for a src that is no longer on screen — dropped');
-            settle(job);
-            enqueue(img); // catch up with whatever is actually showing
-            return;
+            stale.push(img);
+            continue;
           }
           overlay.attach(img, msg.hash);
           overlay.status(
@@ -321,14 +424,27 @@ export default defineContentScript({
             msg.warning ? 'error' : 'info',
           );
           if (!msg.warning) setTimeout(() => overlay.status(img, ''), 1600);
-          done.set(img, job.src);
+          done.set(img, job.key);
         }
-      } else if (img) {
-        overlay.status(img, msg.hint || msg.message, 'error');
+        settle(job);
+        for (const img of stale) enqueue(img); // catch up with whatever is showing
+        return;
+      }
+
+      if (job.imgs.size > 0) {
+        for (const img of job.imgs) overlay.status(img, msg.hint || msg.message, 'error');
       } else {
         // A prefetch that failed is not the reader's problem: they never asked
-        // for that page and may never reach it.
+        // for that page and may never reach it. But a guessed URL that does not
+        // exist says the pattern is wrong for this gallery, and guessing on is
+        // just noise at someone else's server — so two in a row stop it.
         log.debug(`prefetch failed: ${msg.code} ${msg.message}`);
+        if (msg.code === 'ACQUIRE_FAILED') {
+          prefetchMisses++;
+          if (prefetchMisses >= MAX_CONSECUTIVE_MISSES) {
+            log.info(`prefetch off for this gallery after ${prefetchMisses} bad guesses`);
+          }
+        }
       }
 
       settle(job);
@@ -417,7 +533,9 @@ export default defineContentScript({
           overlay.status(img, '');
           done.delete(img);
           const job = byImg.get(img);
-          if (job) cancel(job);
+          // Only the element moved on. If the job is one the prefetcher started
+          // and another element still wants it, detach() leaves it running.
+          if (job) detach(img, job);
 
           watch(img);
           if (auto()) enqueue(img); // parked until `load`, then run
@@ -457,6 +575,7 @@ export default defineContentScript({
       pendingLoad.clear();
       redo.clear();
       prefetchCovered.clear();
+      prefetchMisses = 0;
       // Fresh set so re-enabling re-observes everything currently on the page;
       // the load listeners survive, and adding them again is a no-op.
       watched = new WeakSet<HTMLImageElement>();

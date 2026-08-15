@@ -53,7 +53,7 @@ function Popup() {
     }
   }
 
-  const hasKey = settings.translation.gemini.apiKey.trim().length > 0;
+  const hasKey = settings.translation.gemini.keys.some((k) => k.key.trim().length > 0);
 
   return (
     <div style="width:280px">

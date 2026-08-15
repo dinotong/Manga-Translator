@@ -1,3 +1,4 @@
+import { classifyQuotaError } from '../core/quota';
 import { bytesToBase64 } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { LANG_NAMES, type SourceLang, type TargetLang } from '../shared/lang';
@@ -255,7 +256,21 @@ export class GeminiProvider {
 async function httpError(res: Response, model: string): Promise<PipelineError> {
   const detail = await res.text().catch(() => '');
 
-  if (res.status === 429) return new PipelineError('QUOTA_EXCEEDED', detail.slice(0, 200));
+  if (res.status === 429) {
+    // The whole body is classified before it is truncated: the discriminator
+    // between "wait 30 seconds" and "this key is finished for the day" lives in
+    // `error.details[].violations[].quotaId`, well past the 200th character.
+    const quota = classifyQuotaError(detail);
+    const err = new PipelineError(
+      'QUOTA_EXCEEDED',
+      `${quota.scope}${quota.limit ? ` limit=${quota.limit}` : ''}: ${detail.slice(0, 160)}`,
+      quota.scope === 'per-minute'
+        ? `ยิงเกิน ${quota.limit ?? 15} คำขอ/นาที — รอประมาณ ${Math.ceil((quota.retryAfterMs ?? 30_000) / 1000)} วินาทีแล้วลองใหม่`
+        : '',
+    );
+    err.quota = quota;
+    return err;
+  }
   if (res.status === 400 && /API_KEY_INVALID|API key not valid/i.test(detail)) {
     return new PipelineError('INVALID_KEY', detail.slice(0, 200));
   }

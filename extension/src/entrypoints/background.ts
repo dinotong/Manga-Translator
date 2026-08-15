@@ -2,8 +2,10 @@ import { defineBackground } from 'wxt/utils/define-background';
 import { cacheStats, clearCache } from '../cache/stores';
 import { runJob } from '../background/pipeline';
 import { callOffscreen, ensureOffscreen } from '../background/offscreen-manager';
+import { keyFingerprint, keyReport, type KeyState, nextQuotaResetAt } from '../core/quota';
 import { clearTransfers } from '../shared/blob-bridge';
 import { HINTS_TH, toErrorPayload } from '../shared/errors';
+import { tidyKeyStatuses } from '../shared/key-status';
 import { makeLog } from '../shared/log';
 import type {
   ContentToSw,
@@ -14,8 +16,9 @@ import type {
   SwToTab,
 } from '../shared/messages';
 import { PORT_NAME } from '../shared/messages';
-import { loadSettings, onSettingsChanged } from '../shared/settings';
+import { loadSettings, onSettingsChanged, type Settings } from '../shared/settings';
 import { GeminiProvider } from '../translation/GeminiProvider';
+import { KeyRing } from '../translation/KeyRing';
 
 const log = makeLog('sw');
 
@@ -69,8 +72,15 @@ export default defineBackground(() => {
       const controller = new AbortController();
       inflight.set(raw.jobId, controller);
 
-      // Serialised globally: detection is GPU/CPU bound and running two pages at
-      // once makes both slower while making the visible one arrive later.
+      // Two lanes, not one queue.
+      //
+      // Everything used to run on a single chain, which meant the page the
+      // reader had just turned to waited behind whatever the prefetcher had
+      // guessed — measured at up to 3 s of watching a spinner while the answer
+      // for that exact page was already sitting in the cache. A speculative job
+      // now runs beside the reader's rather than in front of it. The GPU is
+      // still strictly one page at a time (see withDetectSlot); what overlaps is
+      // the waiting — a network fetch, a Gemini call, an IndexedDB read.
       void enqueue(async () => {
         // Jobs are serialised, so by the time this runs the tab may have turned
         // the page and cancelled it. Starting anyway would spend a request from
@@ -286,43 +296,7 @@ async function diagnose(): Promise<DiagnosticLine[]> {
     });
   }
 
-  const key = settings.translation.gemini.apiKey.trim();
-  if (!key) {
-    lines.push({
-      id: 'apikey',
-      label: 'Gemini API key',
-      status: 'fail',
-      detail: 'ยังไม่ได้ใส่',
-      fix: 'ขอ key ฟรีที่ https://aistudio.google.com/apikey แล้ววางในหน้านี้',
-    });
-  } else {
-    try {
-      const provider = new GeminiProvider({
-        apiKey: key,
-        model: settings.translation.gemini.model,
-        from: 'ja',
-        to: settings.lang.target,
-        safetyOff: settings.translation.gemini.safetyOff,
-      });
-      await provider.translateBatch(['テスト']);
-      lines.push({
-        id: 'apikey',
-        label: 'Gemini API key',
-        status: 'ok',
-        detail: `ใช้ได้ · โมเดล ${settings.translation.gemini.model}`,
-        fix: '',
-      });
-    } catch (err) {
-      const payload = toErrorPayload(err);
-      lines.push({
-        id: 'apikey',
-        label: 'Gemini API key',
-        status: 'fail',
-        detail: `${payload.code}: ${payload.message}`,
-        fix: payload.hint,
-      });
-    }
-  }
+  lines.push(...(await diagnoseKeys(settings)));
 
   try {
     const stats = await cacheStats();
@@ -345,3 +319,103 @@ async function diagnose(): Promise<DiagnosticLine[]> {
 
   return lines;
 }
+
+/**
+ * One line for the key that is actually in use, plus one summarising the rest.
+ *
+ * Only the active key is tested for real. Testing all of them would cost one
+ * request per key every time someone presses the button, and with five keys
+ * that is a third of the way to the 15-per-minute limit — a diagnostics screen
+ * that can cause the problem it is diagnosing. The Options page has a per-key
+ * test button for when the question is about one specific key.
+ */
+async function diagnoseKeys(settings: Settings): Promise<DiagnosticLine[]> {
+  const keys = settings.translation.gemini.keys;
+  const lines: DiagnosticLine[] = [];
+
+  if (keys.length === 0) {
+    return [
+      {
+        id: 'apikey',
+        label: 'Gemini API key',
+        status: 'fail',
+        detail: 'ยังไม่ได้ใส่',
+        fix: 'ขอ key ฟรีที่ https://aistudio.google.com/apikey แล้ววางในหน้านี้',
+      },
+    ];
+  }
+
+  const now = Date.now();
+  const statuses = await tidyKeyStatuses(keys, now);
+  const report = keyReport(keys, statuses, now);
+  const active = report.find((r) => r.state === 'active');
+
+  if (!active) {
+    const reset = new Date(nextQuotaResetAt(now)).toLocaleString('th-TH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      day: 'numeric',
+      month: 'short',
+    });
+    lines.push({
+      id: 'apikey',
+      label: 'Gemini API key',
+      status: 'fail',
+      detail: `ใช้ไม่ได้ทั้ง ${keys.length} key`,
+      fix: `โควตารายวันจะรีเซ็ต ${reset} น. (เที่ยงคืนเวลาแปซิฟิก) · หรือเพิ่ม key ใหม่ในหน้านี้`,
+    });
+  } else {
+    try {
+      const ring = await KeyRing.create(
+        settings,
+        { from: 'ja', to: settings.lang.target },
+        { maxWaitMs: 0 },
+      );
+      await ring.translateBatch(['テスト']);
+      lines.push({
+        id: 'apikey',
+        label: 'Gemini API key',
+        status: 'ok',
+        detail: `ใช้ได้ · กำลังใช้ “${active.entry.label || keyFingerprint(active.entry.key)}” · โมเดล ${settings.translation.gemini.model}`,
+        fix: '',
+      });
+    } catch (err) {
+      const payload = toErrorPayload(err);
+      lines.push({
+        id: 'apikey',
+        label: 'Gemini API key',
+        status: 'fail',
+        detail: `${payload.code}: ${payload.message}`,
+        fix: payload.hint,
+      });
+    }
+  }
+
+  if (keys.length > 1) {
+    const spent = report.filter((r) => r.state === 'exhausted').length;
+    const broken = report.filter((r) => r.state === 'invalid').length;
+    const ready = report.filter((r) => r.state === 'active' || r.state === 'standby').length;
+    lines.push({
+      id: 'apikeys',
+      label: `รายการ key (${keys.length})`,
+      status: ready > 0 ? 'ok' : 'fail',
+      detail: report
+        .map((r, i) => `${i + 1}. ${r.entry.label || keyFingerprint(r.entry.key)} — ${STATE_TH[r.state]}`)
+        .join(' · '),
+      fix:
+        spent > 0 || broken > 0
+          ? 'key ที่โควตาหมดจะกลับมาเองหลังเที่ยงคืนเวลาแปซิฟิก · key ที่ถูกปฏิเสธต้องแก้เอง'
+          : '',
+    });
+  }
+
+  return lines;
+}
+
+const STATE_TH: Record<KeyState, string> = {
+  active: 'กำลังใช้',
+  standby: 'สำรอง',
+  exhausted: 'โควตารายวันหมด',
+  invalid: 'ถูกปฏิเสธ',
+  empty: 'ว่าง',
+};

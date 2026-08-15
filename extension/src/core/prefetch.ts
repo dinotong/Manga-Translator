@@ -11,15 +11,29 @@
  *   - nothing at all while the tab is hidden — a backgrounded reader is not
  *     reading, and continuing to pull pages then is indistinguishable from a
  *     crawler;
- *   - nothing while the page the reader is actually looking at is still being
- *     worked on, because the visible page must never queue behind a guess;
  *   - a bounded lookahead, so "read ahead a little" can never become "download
  *     the whole gallery". Pulling an entire chapter stays a thing the user asks
- *     for explicitly.
+ *     for explicitly;
+ *   - and two wrong guesses in a row end prefetching for that gallery. A URL
+ *     pattern that does not hold is not going to start holding on page nine, so
+ *     the cost of guessing wrong is capped at two requests rather than one per
+ *     page for the rest of the book.
+ *
+ * What is deliberately *not* a rule any more: "wait until nothing is running".
+ * That one sounded prudent and made the feature useless — a page takes about
+ * three seconds, a reader turns the page in three to four, so a guess that may
+ * only start once the visible page is finished never has time to finish before
+ * it is needed. The invariant it was protecting — the visible page must never
+ * wait behind a guess — is now enforced where it belongs, by the worker running
+ * speculative work in a separate lane that yields to the reader (see
+ * entrypoints/background.ts), and by a foreground request adopting an in-flight
+ * speculative job for the same image instead of starting a second one.
  */
 
 export const MIN_PREFETCH_GAP_MS = 500;
 export const MAX_LOOKAHEAD = 10;
+/** Consecutive failed guesses in one gallery before giving up on it. */
+export const MAX_CONSECUTIVE_MISSES = 2;
 
 /** 0 disables prefetch entirely; anything outside 0..10 is a mistake, not a wish. */
 export function clampLookahead(value: unknown): number {
@@ -36,10 +50,19 @@ export interface PrefetchInput {
   lookahead: number;
   /** document.visibilityState === 'visible'. */
   visible: boolean;
-  /** No foreground job running or waiting. */
-  idle: boolean;
+  /**
+   * A page the reader is actually looking at is waiting for a free slot.
+   *
+   * Not "a page is being worked on" — that is the normal state while reading and
+   * blocking on it is what made prefetch pointless. This is the narrower case of
+   * real visible work already queued up, where adding a guess to the pile helps
+   * nobody.
+   */
+  foregroundWaiting: boolean;
   /** Speculative requests currently outstanding. */
   inFlight: number;
+  /** Guesses that came back as "no such image", in a row, in this gallery. */
+  consecutiveMisses: number;
   /** Timestamp the last speculative request started, or 0. */
   lastStartAt: number;
   /** Page the reader is on, or null when the site does not expose one. */
@@ -60,7 +83,8 @@ export function pickPrefetch(input: PrefetchInput): number | null {
   if (!input.enabled) return null;
   if (clampLookahead(input.lookahead) === 0) return null;
   if (!input.visible) return null;
-  if (!input.idle) return null;
+  if (input.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return null;
+  if (input.foregroundWaiting) return null;
   if (input.inFlight > 0) return null;
   if (input.now - input.lastStartAt < MIN_PREFETCH_GAP_MS) return null;
   if (input.currentPage === null || !Number.isFinite(input.currentPage)) return null;

@@ -2,7 +2,22 @@ import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '../../ui/ui.css';
 import { clampLookahead, MAX_LOOKAHEAD } from '../../core/prefetch';
+import {
+  type ApiKeyEntry,
+  keyFingerprint,
+  keyReport,
+  type KeyState,
+  type KeyStatuses,
+  moveKey,
+  nextQuotaResetAt,
+  withCleared,
+} from '../../core/quota';
 import { PRESETS, type PresetName } from '../../core/resolution';
+import {
+  loadKeyStatuses,
+  onKeyStatusesChanged,
+  updateKeyStatuses,
+} from '../../shared/key-status';
 import {
   LANG_LABELS_TH,
   SOURCE_LANGS,
@@ -23,17 +38,21 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../
  */
 function Options() {
   const [s, setS] = useState<Settings>(DEFAULT_SETTINGS);
-  const [keyState, setKeyState] = useState<{ busy: boolean; msg: string; ok?: boolean }>({
-    busy: false,
-    msg: '',
-  });
+  const [statuses, setStatuses] = useState<KeyStatuses>({});
+  /** Per-key test result, keyed by entry id. */
+  const [tests, setTests] = useState<Record<string, { busy: boolean; msg: string; ok?: boolean }>>({});
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [lines, setLines] = useState<DiagnosticLine[] | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
   const [stats, setStats] = useState<CacheStats | null>(null);
 
   useEffect(() => {
     void loadSettings().then(setS);
+    void loadKeyStatuses().then(setStatuses);
     void refreshStats();
+    // The service worker marks a key exhausted mid-read; this page should show
+    // it happening rather than only after a reload.
+    return onKeyStatusesChanged(setStatuses);
   }, []);
 
   async function patch(next: Partial<Settings>) {
@@ -45,18 +64,56 @@ function Options() {
     if ('stats' in res) setStats(res.stats);
   }
 
-  async function testKey() {
-    setKeyState({ busy: true, msg: 'กำลังทดสอบ…' });
+  /* ---------------- API keys ---------------- */
+
+  const keys = s.translation.gemini.keys;
+
+  async function setKeys(next: ApiKeyEntry[]) {
+    await patch({
+      translation: { ...s.translation, gemini: { ...s.translation.gemini, keys: next } },
+    });
+  }
+
+  async function addKey() {
+    await setKeys([
+      ...keys,
+      { id: crypto.randomUUID(), label: `key ${keys.length + 1}`, key: '' },
+    ]);
+  }
+
+  async function editKey(id: string, patchEntry: Partial<ApiKeyEntry>) {
+    await setKeys(keys.map((k) => (k.id === id ? { ...k, ...patchEntry } : k)));
+    // Changing the key text makes anything we knew about it obsolete: a pasted
+    // replacement for a revoked key must not stay marked invalid.
+    if (patchEntry.key !== undefined) {
+      setStatuses(await updateKeyStatuses((cur) => withCleared(cur, id)));
+      setTests((t) => ({ ...t, [id]: { busy: false, msg: '' } }));
+    }
+  }
+
+  async function removeKey(id: string) {
+    await setKeys(keys.filter((k) => k.id !== id));
+    setStatuses(await updateKeyStatuses((cur) => withCleared(cur, id)));
+  }
+
+  async function testKey(entry: ApiKeyEntry) {
+    setTests((t) => ({ ...t, [entry.id]: { busy: true, msg: 'กำลังทดสอบ…' } }));
     const res = await send({
       t: 'TEST_KEY',
-      apiKey: s.translation.gemini.apiKey,
+      apiKey: entry.key,
       model: s.translation.gemini.model,
     });
-    setKeyState(
-      res.ok
-        ? { busy: false, msg: 'ใช้ได้ ✓', ok: true }
-        : { busy: false, msg: `${res.message}\n${res.hint}`, ok: false },
-    );
+    if (res.ok) {
+      // A key that answers is not exhausted and not revoked, whatever we had
+      // recorded — the live answer wins over the bookkeeping.
+      setStatuses(await updateKeyStatuses((cur) => withCleared(cur, entry.id)));
+      setTests((t) => ({ ...t, [entry.id]: { busy: false, msg: 'ใช้ได้ ✓', ok: true } }));
+    } else {
+      setTests((t) => ({
+        ...t,
+        [entry.id]: { busy: false, msg: `${res.message}\n${res.hint}`, ok: false },
+      }));
+    }
   }
 
   async function runDiagnostics() {
@@ -68,6 +125,15 @@ function Options() {
   }
 
   const g = s.translation.gemini;
+  const now = Date.now();
+  const report = keyReport(keys, statuses, now);
+  const allSpent = keys.length > 0 && !report.some((r) => r.state === 'active');
+  const resetLabel = new Date(nextQuotaResetAt(now)).toLocaleString('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+  });
 
   return (
     <div style="max-width:640px;margin:0 auto">
@@ -83,30 +149,106 @@ function Options() {
           </a>{' '}
           — ไม่ต้องผูกบัตร ใช้ได้ 1,000 ครั้ง/วัน (เท่ากับ ~1,000 หน้า เพราะเราส่งทั้งหน้าใน 1 ครั้ง)
         </p>
+        <p class="hint">
+          ใส่ได้<b>หลาย key เรียงตามลำดับ</b> — ใช้อันบนสุดก่อน พอโควตารายวันหมดจะเลื่อนไปอันถัดไปให้เอง
+          {keys.length > 1 ? ` · ตอนนี้มี ${keys.length} key = ${keys.length * 1000} หน้า/วัน` : ''}
+        </p>
 
-        <div class="row">
-          <input
-            type="password"
-            value={g.apiKey}
-            placeholder="AIza..."
-            onInput={(e) =>
-              void patch({
-                translation: {
-                  ...s.translation,
-                  gemini: { ...g, apiKey: (e.target as HTMLInputElement).value },
-                },
-              })
-            }
-          />
-          <button onClick={() => void testKey()} disabled={keyState.busy || !g.apiKey.trim()}>
-            ทดสอบ
-          </button>
+        {keys.length === 0 && (
+          <p class="hint fail">ยังไม่มี key เลย — กด “เพิ่ม key” แล้ววาง key ที่ขอมา</p>
+        )}
+
+        {report.map((r, i) => {
+          const t = tests[r.entry.id];
+          return (
+            <div key={r.entry.id} class="keyrow">
+              <div class="row">
+                <span class={`badge ${STATE_CLASS[r.state]}`}>
+                  {i + 1}. {STATE_TH[r.state]}
+                </span>
+                <input
+                  type="text"
+                  value={r.entry.label}
+                  placeholder={`key ${i + 1}`}
+                  style="flex:1"
+                  onInput={(e) =>
+                    void editKey(r.entry.id, { label: (e.target as HTMLInputElement).value })
+                  }
+                />
+                <button
+                  title="เลื่อนขึ้น"
+                  disabled={i === 0}
+                  onClick={() => void setKeys(moveKey(keys, i, -1))}
+                >
+                  ↑
+                </button>
+                <button
+                  title="เลื่อนลง"
+                  disabled={i === keys.length - 1}
+                  onClick={() => void setKeys(moveKey(keys, i, 1))}
+                >
+                  ↓
+                </button>
+                <button title="ลบ key นี้" onClick={() => void removeKey(r.entry.id)}>
+                  ลบ
+                </button>
+              </div>
+
+              <div class="row" style="margin-top:6px">
+                <input
+                  type={revealed[r.entry.id] ? 'text' : 'password'}
+                  value={r.entry.key}
+                  placeholder="AIza..."
+                  onInput={(e) =>
+                    void editKey(r.entry.id, { key: (e.target as HTMLInputElement).value })
+                  }
+                />
+                <button
+                  onClick={() => setRevealed((v) => ({ ...v, [r.entry.id]: !v[r.entry.id] }))}
+                >
+                  {revealed[r.entry.id] ? 'ซ่อน' : 'ดู'}
+                </button>
+                <button
+                  onClick={() => void testKey(r.entry)}
+                  disabled={t?.busy || !r.entry.key.trim()}
+                >
+                  ทดสอบ
+                </button>
+              </div>
+
+              {r.state === 'exhausted' && (
+                <p class="hint warn">
+                  โควตารายวันหมดตั้งแต่ {r.status?.exhaustedOn} (นับตามวันแบบแปซิฟิก) — จะกลับมาใช้ได้เอง{' '}
+                  {resetLabel} น.
+                </p>
+              )}
+              {r.state === 'invalid' && (
+                <p class="hint fail" style="white-space:pre-wrap">
+                  ข้ามอันนี้ไป: {r.status?.invalid} — แก้ key แล้วสถานะจะรีเซ็ตเอง
+                </p>
+              )}
+              {t?.msg && (
+                <p
+                  class={`hint ${t.ok === true ? 'ok' : t.ok === false ? 'fail' : ''}`}
+                  style="white-space:pre-wrap"
+                >
+                  {t.msg}
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        <div class="row" style="margin-top:8px">
+          <button onClick={() => void addKey()}>+ เพิ่ม key</button>
         </div>
-        {keyState.msg && (
-          <p class={`hint ${keyState.ok === true ? 'ok' : keyState.ok === false ? 'fail' : ''}`}
-             style="white-space:pre-wrap">
-            {keyState.msg}
-          </p>
+
+        {allSpent && (
+          <div class="note">
+            <b>ใช้ครบทุก key แล้ว</b> — โควตารายวันจะรีเซ็ต {resetLabel} น.
+            (Google นับวันตาม<b>เวลาแปซิฟิก</b> ไม่ใช่เวลาไทย จึงไม่ตรงกับเที่ยงคืนบ้านเรา)
+            ระหว่างนี้เพิ่ม key ใหม่ได้ หรือปิดแปลอัตโนมัติแล้วใช้คลิกขวาเฉพาะหน้าที่อยากอ่าน
+          </div>
         )}
 
         <label>โมเดล</label>
@@ -150,6 +292,9 @@ function Options() {
           API key ที่เก็บใน extension <b>ไม่ถือเป็นความลับ</b> — คนที่เข้าถึงเครื่องนี้ได้อ่านได้
           แนะนำให้ตั้ง restriction ฝั่ง Google และอย่าใช้ key ที่ผูกกับโปรเจกต์ที่มีบิล
           · Gemini free tier อาจนำข้อความไปปรับปรุงโมเดล ถ้าซีเรียสให้รอโหมด Ollama
+          <br />
+          <b>ยิ่งใส่หลาย key ยิ่งมีของให้เสีย</b> — ทุก key ในรายการนี้เก็บแบบเดียวกันหมด
+          ถ้าเครื่องหลุดก็หลุดพร้อมกันทั้งชุด
         </div>
       </section>
 
@@ -193,6 +338,30 @@ function Options() {
           <option value="target-only">แสดงคำแปลอย่างเดียว</option>
           <option value="target-plus-source-on-hover">แสดงคำแปล · ชี้เมาส์เพื่อดูต้นฉบับ</option>
         </select>
+
+        <label class="switch">
+          <input
+            type="checkbox"
+            checked={s.display.peekOnHover}
+            onChange={(e) =>
+              void patch({
+                display: {
+                  ...s.display,
+                  peekOnHover: (e.target as HTMLInputElement).checked,
+                },
+              })
+            }
+          />
+          ชี้เมาส์ที่กล่องแล้วจางลงเพื่อดูภาพข้างหลัง
+        </label>
+        <p class="hint">
+          กล่องคำแปลมักใหญ่กว่าตัวหนังสือเดิม เลยบังลายเส้นไปด้วย · ชี้เมาส์ค้างที่กล่องไหน
+          <b>เฉพาะกล่องนั้น</b>จะจางลงให้เห็นภาพ ขยับเมาส์ออกก็กลับมาเหมือนเดิม
+        </p>
+        <p class="hint">
+          กล่องคำแปล<b>ไม่ดูดคลิก</b> — คลิกทะลุไปที่หน้าเว็บได้ตามปกติ
+          (เว็บอย่าง imhentai เปลี่ยนหน้าด้วยการคลิกที่รูป ถ้ากล่องดูดคลิกไว้จะกดเปลี่ยนหน้าไม่ได้)
+        </p>
 
         <label>ขนาดตัวอักษร ({s.display.fontScale.toFixed(2)}×)</label>
         <input
@@ -351,6 +520,22 @@ function Options() {
     </div>
   );
 }
+
+const STATE_TH: Record<KeyState, string> = {
+  active: 'กำลังใช้',
+  standby: 'สำรอง',
+  exhausted: 'โควตาหมดวันนี้',
+  invalid: 'ถูกปฏิเสธ',
+  empty: 'ว่าง',
+};
+
+const STATE_CLASS: Record<KeyState, string> = {
+  active: 'ok',
+  standby: '',
+  exhausted: 'warn',
+  invalid: 'fail',
+  empty: '',
+};
 
 async function send(req: Request): Promise<Response> {
   return (await chrome.runtime.sendMessage(req)) as Response;
