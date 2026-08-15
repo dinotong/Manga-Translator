@@ -77,6 +77,25 @@ export default defineContentScript({
     const byImg = new Map<HTMLImageElement, Job>();
     /** Last src each element was successfully translated at. */
     const done = new WeakMap<HTMLImageElement, string>();
+    /**
+     * Image URL -> the hash of the bytes that URL served, for results we already
+     * hold.
+     *
+     * This is what makes a prefetched page turn instant instead of merely fast.
+     * Without it, arriving at a page that was fetched, detected and translated
+     * seconds ago still costs a full round trip — content script to worker,
+     * re-download the bytes, re-hash them, two IndexedDB reads — purely to
+     * rediscover a hash the worker already told us. Measured at 0.65-2.7 s on
+     * imhentai, every turn, with the "กำลังอ่านภาพ…" pill up for all of it,
+     * which is the wait the owner reported after prefetch supposedly fixed it.
+     *
+     * The assumption is that one URL serves the same bytes for as long as this
+     * page is open. That is the same assumption the browser's own HTTP cache
+     * makes — the element is showing those cached bytes right now — and the map
+     * dies with the content script, so it cannot outlive the session that
+     * observed it. Only URLs we fetched ourselves are ever in here.
+     */
+    const hashOfUrl = new Map<string, string>();
     /** Last src we have seen on each element, to tell a real page turn from noise. */
     const lastSrc = new WeakMap<HTMLImageElement, string>();
     /** Asked for while the bytes were still downloading; retried from `load`. */
@@ -119,6 +138,20 @@ export default defineContentScript({
       // a fresh request on. A first manual request still uses the cache.
       if (!manual && alreadyDone) return;
       if (manual && alreadyDone) redo.add(img);
+
+      // We have already been told what this exact URL hashes to, and we still
+      // hold that result. Nothing downstream can produce a different answer, so
+      // draw it now rather than spending a round trip to be told again.
+      const known = hashOfUrl.get(src);
+      if (!manual && known && overlay.has(known)) {
+        const current = byImg.get(img);
+        if (current) detach(img, current);
+        if (overlay.attach(img, known)) {
+          overlay.status(img, '');
+          done.set(img, src);
+          return;
+        }
+      }
 
       const current = byImg.get(img);
       if (current) {
@@ -404,6 +437,10 @@ export default defineContentScript({
         // Keyed by image hash, so it is worth keeping whatever page it came from
         // — including a prefetch, whose entire purpose is to be waiting here.
         overlay.setResult(msg.hash, msg.natural, msg.blocks);
+        // job.key is the URL those bytes came from: the guessed one for a
+        // prefetch, the element's own src otherwise. Remembering the pairing is
+        // what lets the next turn onto this page skip the round trip entirely.
+        hashOfUrl.set(job.key, msg.hash);
         // The guessed URL was a real image, so the pattern holds for this book.
         if (job.speculative) prefetchMisses = 0;
 
@@ -574,6 +611,7 @@ export default defineContentScript({
       queue.length = 0;
       pendingLoad.clear();
       redo.clear();
+      hashOfUrl.clear();
       prefetchCovered.clear();
       prefetchMisses = 0;
       // Fresh set so re-enabling re-observes everything currently on the page;

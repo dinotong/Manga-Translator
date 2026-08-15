@@ -23,11 +23,21 @@
  * That one sounded prudent and made the feature useless — a page takes about
  * three seconds, a reader turns the page in three to four, so a guess that may
  * only start once the visible page is finished never has time to finish before
- * it is needed. The invariant it was protecting — the visible page must never
- * wait behind a guess — is now enforced where it belongs, by the worker running
- * speculative work in a separate lane that yields to the reader (see
- * entrypoints/background.ts), and by a foreground request adopting an in-flight
- * speculative job for the same image instead of starting a second one.
+ * it is needed.
+ *
+ * The invariant it was protecting — the visible page must never wait behind a
+ * guess — is instead protected two ways here: `foregroundWaiting` refuses to add
+ * a guess while real visible work is queued, and a foreground request for a page
+ * already being fetched speculatively joins that job rather than starting a
+ * second one (`adopt` in entrypoints/content.ts).
+ *
+ * What does *not* protect it, despite an earlier version of this comment saying
+ * so: the service worker does not run speculative work in a separate lane. It
+ * has one global queue (`enqueue` in entrypoints/background.ts) and a foreground
+ * job that arrives while a guess is in flight waits behind it. Measured on
+ * imhentai that costs nothing, because the guess in flight is almost always the
+ * page the reader is turning to, but a reader who jumps somewhere unguessed can
+ * wait one extra job. See D-027.
  */
 
 export const MIN_PREFETCH_GAP_MS = 500;
