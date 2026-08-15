@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '../../ui/ui.css';
+import { isAutoOn, siteKey, withAutoSite } from '../../core/site-scope';
 import { LANG_LABELS_TH, SOURCE_LANGS, TARGET_LANGS, type SourceLang, type TargetLang } from '../../shared/lang';
 import type { Request, Response } from '../../shared/messages';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../../shared/settings';
@@ -14,15 +15,34 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../
  */
 function Popup() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  /**
+   * The site this popup is talking about.
+   *
+   * `undefined` while it is still being read, `null` on a page that cannot have
+   * a setting (chrome://, a local file). Told apart because "loading" and
+   * "this page can never be switched on" want different words on screen.
+   */
+  const [site, setSite] = useState<string | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
 
   useEffect(() => {
     void loadSettings().then(setSettings);
+    void chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(([tab]) => setSite(tab?.url ? siteKey(tab.url) : null));
   }, []);
 
   async function patch(next: Partial<Settings>) {
     setSettings(await saveSettings(next));
+  }
+
+  /** The switch reads and writes this one site, never the browser as a whole. */
+  const autoHere = isAutoOn(settings.autoSites, site ?? null);
+
+  async function toggleAutoHere(on: boolean) {
+    if (!site) return;
+    await patch({ autoSites: withAutoSite(settings.autoSites, site, on) });
   }
 
   async function toggleEnabled(on: boolean) {
@@ -75,27 +95,49 @@ function Popup() {
             checked={settings.enabled}
             onChange={(e) => void toggleEnabled((e.target as HTMLInputElement).checked)}
           />
-          เปิดใช้งาน
+          เปิดใช้งาน (ทุกเว็บ)
         </label>
+        <p class="hint">สวิตช์หยุดทุกอย่าง — ปิดแล้วส่วนเสริมไม่ทำอะไรเลยทั้งเบราว์เซอร์</p>
 
         <label class="switch">
           <input
             type="checkbox"
-            checked={settings.autoTranslate}
-            disabled={!settings.enabled}
-            onChange={(e) => void patch({ autoTranslate: (e.target as HTMLInputElement).checked })}
+            checked={autoHere}
+            disabled={!settings.enabled || !site}
+            onChange={(e) => void toggleAutoHere((e.target as HTMLInputElement).checked)}
           />
-          แปลอัตโนมัติขณะอ่าน
+          แปลอัตโนมัติ<b>เฉพาะเว็บนี้</b>
         </label>
         <p class="hint">
-          เปิดหน้ามังงะแล้วแปลให้เอง · เปลี่ยนหน้าแล้วแปลหน้าใหม่ให้เอง
+          {site === undefined ? (
+            'กำลังดูว่าเปิดเว็บอะไรอยู่…'
+          ) : site === null ? (
+            'หน้านี้ไม่ใช่เว็บไซต์ (เช่น edge://, ไฟล์ในเครื่อง) จึงเปิดให้ไม่ได้'
+          ) : (
+            <>
+              สวิตช์นี้มีผลกับ <b>{site}</b> เท่านั้น — {autoHere ? 'ตอนนี้เปิดอยู่' : 'ตอนนี้ปิดอยู่'}
+              {' · '}เว็บอื่นที่ยังไม่เคยเปิดจะไม่ทำงานและไม่เสียโควตาเลย
+            </>
+          )}
+        </p>
+        <p class="hint">
+          จำไว้ให้เอง — เปิดครั้งเดียวแล้วกลับมาอ่านเว็บนี้อีกก็ทำงานต่อโดยไม่ต้องเปิดใหม่
           {settings.performance.prefetchLookahead > 0
             ? ` · แปลล่วงหน้าอีก ${settings.performance.prefetchLookahead} หน้าบนเว็บที่เดาหน้าถัดไปได้`
             : ''}
         </p>
         <p class="hint">
-          ปิดไว้ = แปลเฉพาะตอนสั่งเอง (คลิกขวาที่รูป → “แปลรูปนี้”) ปลอดภัยต่อโควตากว่า
+          ปิดไว้ = แปลเฉพาะตอนสั่งเอง (คลิกขวาที่รูป → “แปลรูปนี้”) ซึ่ง<b>ใช้ได้ทุกเว็บ</b>เสมอ
         </p>
+        {settings.autoSites.length > 0 && (
+          <p class="hint">
+            เปิดอัตโนมัติไว้ {settings.autoSites.length} เว็บ:{' '}
+            {settings.autoSites.join(', ')} ·{' '}
+            <a href="#" onClick={() => chrome.runtime.openOptionsPage()}>
+              จัดการรายการ
+            </a>
+          </p>
+        )}
       </section>
 
       <section>

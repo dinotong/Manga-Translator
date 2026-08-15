@@ -4,6 +4,7 @@ import { Overlay } from '../content/overlay/overlay';
 import { elementKey, isLoaded, isPageCandidate, scanImages } from '../content/scan';
 import { profileFor } from '../content/site-profiles';
 import { MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
+import { isAutoOn, siteKey } from '../core/site-scope';
 import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import {
@@ -43,7 +44,15 @@ export default defineContentScript({
 
     let settings = await loadSettings();
     const profile = profileFor(new URL(location.href));
-    log.info(`profile=${profile.id} acquire=${profile.acquire}`);
+    /**
+     * The site this tab counts as, for the per-site auto-translate switch.
+     *
+     * Read once. A single-page reader can change the path a hundred times in a
+     * session but it cannot change its own hostname without a real navigation,
+     * which reloads this script anyway.
+     */
+    const site = siteKey(location.href);
+    log.info(`profile=${profile.id} acquire=${profile.acquire} site=${site ?? '(none)'}`);
 
     const overlay = new Overlay(settings);
 
@@ -111,14 +120,25 @@ export default defineContentScript({
     let jobCounter = 0;
     let lastContextTarget: HTMLImageElement | null = null;
 
-    const auto = (): boolean => settings.enabled && settings.autoTranslate;
+    /**
+     * Is anything allowed to happen here without the reader asking?
+     *
+     * Two switches, deliberately different in kind: `enabled` is the global kill
+     * switch, and `autoSites` says this particular site was opted in. A site
+     * nobody opted in is off, so on the overwhelming majority of pages in the
+     * browser this is false and nothing below ever runs.
+     */
+    const auto = (): boolean => settings.enabled && isAutoOn(settings.autoSites, site);
     const srcOf = (img: HTMLImageElement): string => img.currentSrc || img.src;
 
     /* ---------------- scheduling ---------------- */
 
     function enqueue(img: HTMLImageElement, manual = false): void {
+      // A manual request is the reader pointing at one image on the page in
+      // front of them, so it works on any site — that is the whole point of
+      // having a manual trigger. Only the automatic path is scoped.
       if (!settings.enabled) return;
-      if (!manual && !settings.autoTranslate) return;
+      if (!manual && !auto()) return;
 
       const src = srcOf(img);
       if (!src) return;
@@ -374,8 +394,22 @@ export default defineContentScript({
       });
     }
 
+    /**
+     * The scheduler only ticks on a site that is switched on.
+     *
+     * `pickPrefetch` would refuse anyway, but a four-times-a-second timer on
+     * every tab in the browser is exactly the kind of cost the per-site switch
+     * exists to avoid, and "off" should mean the timer does not exist.
+     */
     let prefetchTimer: ReturnType<typeof setInterval> | undefined;
-    if (profile.prefetch) prefetchTimer = setInterval(prefetchTick, PREFETCH_TICK_MS);
+    function startPrefetch(): void {
+      if (prefetchTimer !== undefined || !profile.prefetch || !auto()) return;
+      prefetchTimer = setInterval(prefetchTick, PREFETCH_TICK_MS);
+    }
+    function stopPrefetch(): void {
+      clearInterval(prefetchTimer);
+      prefetchTimer = undefined;
+    }
 
     document.addEventListener('visibilitychange', () => {
       // "Stop when the tab is hidden" has to mean the request already running,
@@ -586,6 +620,7 @@ export default defineContentScript({
     function startObserving(): void {
       if (observing) return;
       observing = true;
+      startPrefetch();
       mo.observe(document.documentElement, {
         childList: true,
         subtree: true,
@@ -606,6 +641,7 @@ export default defineContentScript({
       observing = false;
       io.disconnect();
       mo.disconnect();
+      stopPrefetch();
       clearTimeout(rescanTimer);
       for (const job of Array.from(active.values())) cancel(job);
       queue.length = 0;
@@ -683,15 +719,18 @@ export default defineContentScript({
         }
       } else if (msg?.t === 'SETTINGS_CHANGED') {
         void loadSettings().then((next) => {
-          const wasEnabled = settings.enabled;
+          const wasOn = auto();
           settings = next;
-          if (!next.enabled) {
+          // Either switch going off stops everything here, including the
+          // overlays already drawn: the reader just said "not on this site",
+          // and leaving the last page's translation up is not what that means.
+          if (!auto()) {
             stopObserving();
             return;
           }
           overlay.updateSettings(next);
-          if (!wasEnabled) startObserving();
-          else if (next.autoTranslate) rescan();
+          if (!wasOn) startObserving();
+          else rescan();
         });
       }
       return false;
@@ -704,9 +743,12 @@ export default defineContentScript({
       );
     }
 
-    addEventListener('pagehide', () => clearInterval(prefetchTimer), { once: true });
+    addEventListener('pagehide', () => stopPrefetch(), { once: true });
 
-    if (settings.enabled) startObserving();
+    // Nothing is observed, scanned or timed on a site the reader has not opted
+    // in. The script stays resident only to answer the right-click menu and the
+    // popup's "translate this page now", which cost nothing until used.
+    if (auto()) startObserving();
     log.info(`observing=${observing} auto=${auto()} prefetch=${Boolean(profile.prefetch)}`);
 
     function nearViewport(r: DOMRect): boolean {

@@ -24,6 +24,15 @@ export interface SiteProfile {
   acquire: 'auto' | 'content-script' | 'sw-fetch';
   reader: 'paged' | 'strip' | 'auto';
   sourceLang?: SourceLang;
+  /**
+   * Concrete hostnames this profile is aimed at.
+   *
+   * `match()` is a pattern and cannot be enumerated, but the v2 -> v3 settings
+   * migration needs an actual list of sites to switch auto-translate on for —
+   * see shared/settings.ts. Kept here because hostnames are site knowledge, and
+   * site knowledge does not belong in core/ or in shared/.
+   */
+  seedHosts?: readonly string[];
   /** Identifies the gallery/series, for per-set language memory and context. */
   setKey?(url: URL): string | null;
   /** Current page number, used to notice a page turn from the URL alone. */
@@ -61,6 +70,7 @@ export interface SiteProfile {
 const mangadex: SiteProfile = {
   id: 'mangadex',
   match: (u) => /(^|\.)mangadex\.org$/.test(u.hostname),
+  seedHosts: ['mangadex.org'],
   pageSelector: '.md--page img.img, img.img',
   acquire: 'content-script',
   reader: 'auto',
@@ -89,6 +99,11 @@ const mangadex: SiteProfile = {
 const imhentai: SiteProfile = {
   id: 'imhentai',
   match: (u) => /(^|\.)imhentai\./.test(u.hostname),
+  // The site is served under several TLDs and `match` deliberately covers all
+  // of them. The upgrade cannot know which one the reader uses, and a site left
+  // out goes silent with no explanation, so all the known ones are seeded; an
+  // unused row is removable in one click on the options page.
+  seedHosts: ['imhentai.xxx', 'imhentai.com', 'imhentai.net'],
   pageSelector: '#gimg',
   exclude: 'iframe *',
   acquire: 'sw-fetch',
@@ -129,3 +144,13 @@ const REGISTRY: readonly SiteProfile[] = [mangadex, imhentai];
 export function profileFor(url: URL): SiteProfile {
   return REGISTRY.find((p) => p.match(url)) ?? DEFAULT_PROFILE;
 }
+
+/**
+ * Every hostname a profile was written for.
+ *
+ * The only consumer is the v2 -> v3 migration: a reader who had the old global
+ * auto-translate switch on keeps it on for the sites it was ever aimed at, and
+ * gets it off everywhere else. Adding a profile later does not retroactively
+ * switch anything on — the migration runs once.
+ */
+export const PROFILE_HOSTS: readonly string[] = REGISTRY.flatMap((p) => p.seedHosts ?? []);

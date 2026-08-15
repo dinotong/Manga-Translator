@@ -13,6 +13,7 @@ import {
   withCleared,
 } from '../../core/quota';
 import { PRESETS, type PresetName } from '../../core/resolution';
+import { withAutoSite } from '../../core/site-scope';
 import {
   loadKeyStatuses,
   onKeyStatusesChanged,
@@ -296,6 +297,40 @@ function Options() {
           <b>ยิ่งใส่หลาย key ยิ่งมีของให้เสีย</b> — ทุก key ในรายการนี้เก็บแบบเดียวกันหมด
           ถ้าเครื่องหลุดก็หลุดพร้อมกันทั้งชุด
         </div>
+      </section>
+
+      <section>
+        <h2>เว็บที่เปิดแปลอัตโนมัติ</h2>
+        <p class="hint">
+          แปลอัตโนมัติ<b>แยกตามเว็บ</b> — เปิดที่เว็บไหนก็ทำงานเฉพาะเว็บนั้น
+          เว็บที่ไม่ได้อยู่ในรายการนี้จะไม่ถูกสแกน ไม่ยิงคำขอ และไม่กินโควตาเลย
+        </p>
+        <p class="hint">
+          เปิด/ปิดทำที่<b>ป๊อปอัปตอนอยู่บนเว็บนั้น</b> · หน้านี้มีไว้ดูว่าเปิดอะไรค้างไว้บ้างและเอาออก
+        </p>
+
+        {s.autoSites.length === 0 ? (
+          <p class="hint">
+            ยังไม่ได้เปิดเว็บไหนเลย — เปิดหน้ามังงะ กดไอคอนส่วนเสริม แล้วเปิดสวิตช์ “แปลอัตโนมัติเฉพาะเว็บนี้”
+          </p>
+        ) : (
+          s.autoSites.map((host) => (
+            <div key={host} class="row" style="margin-top:6px">
+              <span class="badge ok">เปิด</span>
+              <span style="flex:1">{host}</span>
+              <button
+                title={`เลิกแปลอัตโนมัติที่ ${host}`}
+                onClick={() => void patch({ autoSites: withAutoSite(s.autoSites, host, false) })}
+              >
+                เอาออก
+              </button>
+            </div>
+          ))
+        )}
+
+        <p class="hint" style="margin-top:8px">
+          เอาออกแล้วเว็บนั้นกลับไปเป็นโหมดสั่งเอง — คลิกขวาที่รูป → “แปลรูปนี้” ยังใช้ได้ทุกเว็บเสมอ
+        </p>
       </section>
 
       <section>

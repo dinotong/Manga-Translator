@@ -1,6 +1,8 @@
+import { PROFILE_HOSTS } from '../content/site-profiles';
 import { clampLookahead } from '../core/prefetch';
 import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
+import { normalizeSiteList } from '../core/site-scope';
 import type { SourceLang, TargetLang } from './lang';
 
 export type { ApiKeyEntry };
@@ -17,12 +19,31 @@ export interface Settings {
    * Bumped whenever a migration is needed. See hydrate().
    *
    * 1 -> 2: `gemini.apiKey` (one string) became `gemini.keys` (an ordered list).
+   * 2 -> 3: `autoTranslate` (one global boolean) became `autoSites` (a list of
+   *         hostnames), because one switch governing every site in the browser
+   *         spent quota on pages nobody asked about.
    */
-  version: 2;
+  version: 3;
 
+  /**
+   * The master kill switch, and the only thing here that is still global.
+   *
+   * Off means the extension does nothing anywhere, including the right-click
+   * menu. It is deliberately not per-site: "stop everything" has to be reachable
+   * without first working out which site you are on.
+   */
   enabled: boolean;
-  /** false = nothing happens until the user asks for it (right-click / popup). */
-  autoTranslate: boolean;
+
+  /**
+   * Hostnames where translation happens on its own, canonical form (see
+   * core/site-scope.ts).
+   *
+   * A list of the sites that are **on**; anything not in it is off. Empty is the
+   * fresh-install state and means nothing happens automatically anywhere — the
+   * right-click menu and "แปลหน้านี้เดี๋ยวนี้" still work everywhere, because
+   * those are the reader asking, once, for one page.
+   */
+  autoSites: string[];
 
   lang: {
     source: SourceLang;
@@ -96,9 +117,9 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 2,
+  version: 3,
   enabled: true,
-  autoTranslate: false,
+  autoSites: [],
   lang: { source: 'ja', target: 'th' },
   translation: {
     mode: 'cloud',
@@ -163,6 +184,31 @@ function migrateKeys(version: unknown, raw: LegacyGemini | undefined): ApiKeyEnt
   return legacy ? [{ id: 'legacy-1', label: 'key เดิม', key: legacy }] : [];
 }
 
+/**
+ * v2 -> v3: one global `autoTranslate` becomes a list of hostnames.
+ *
+ * Neither obvious answer is acceptable on its own. Migrating everyone to "off
+ * everywhere" silently breaks a working setup: the reader updates, opens their
+ * manga site, nothing happens, and there is nothing on screen explaining why.
+ * Migrating to "on everywhere" is impossible — that global is precisely the bug.
+ *
+ * So: a reader who had it on keeps it on for the hostnames a site profile was
+ * written for (see content/site-profiles.ts) and gets it off everywhere else.
+ * Those are the only places auto-translate was ever aimed at, so their reading
+ * survives the upgrade untouched while every unrelated tab stops costing them
+ * requests. A reader who had it off gets an empty list, which is the same thing
+ * they had.
+ *
+ * Gated on the stored version, like the key migration above and for the same
+ * reason: after the upgrade an empty list is a decision — the reader switched
+ * their last site off — and re-seeding it there would make that undoable.
+ */
+function migrateAutoSites(version: unknown, stored: unknown, legacyOn: unknown): string[] {
+  const listed = normalizeSiteList(stored);
+  if (listed.length > 0 || Number(version) >= 3) return listed;
+  return legacyOn === true ? normalizeSiteList(PROFILE_HOSTS) : [];
+}
+
 function isKeyEntry(v: unknown): v is ApiKeyEntry {
   const e = v as ApiKeyEntry | null;
   return (
@@ -177,13 +223,17 @@ function isKeyEntry(v: unknown): v is ApiKeyEntry {
  * user's machine and there is no second chance to get it right.
  */
 export function hydrate(stored: unknown): Settings {
-  const s = (stored ?? {}) as Partial<Settings>;
+  const s = (stored ?? {}) as Partial<Settings> & { autoTranslate?: unknown };
   const d = DEFAULT_SETTINGS;
   const gemini = s.translation?.gemini as (Partial<Settings['translation']['gemini']> & LegacyGemini) | undefined;
-  return {
+  const next: Settings & { autoTranslate?: unknown } = {
     ...d,
     ...s,
-    version: 2,
+    version: 3,
+    // Normalised on read, not only on write: this list decides which sites are
+    // allowed to spend the reader's daily quota, so a hand-edited storage entry
+    // must not be able to add a site under a spelling the popup cannot show.
+    autoSites: migrateAutoSites(s.version, s.autoSites, s.autoTranslate),
     lang: { ...d.lang, ...s.lang },
     translation: {
       ...d.translation,
@@ -211,6 +261,11 @@ export function hydrate(stored: unknown): Settings {
     },
     perSet: { ...d.perSet, ...s.perSet },
   };
+  // The `...s` spread above copies the v2 field through. Deleting it means the
+  // next write drops it from storage instead of leaving a stale global that
+  // looks authoritative to anyone reading the record later.
+  delete next.autoTranslate;
+  return next;
 }
 
 export async function loadSettings(): Promise<Settings> {

@@ -40,7 +40,8 @@ interface Mounted {
 }
 
 export class Overlay {
-  private readonly root: ShadowRoot;
+  /** Null until the first thing is actually drawn — see `root`. */
+  private shadow: ShadowRoot | null = null;
   /** Results by image hash, so a re-shown page mounts instantly. */
   private readonly results = new Map<string, { natural: Size; blocks: OverlayBlock[] }>();
   private readonly mounted = new Map<HTMLImageElement, Mounted>();
@@ -63,14 +64,33 @@ export class Overlay {
 
   constructor(settings: Settings) {
     this.settings = settings;
+  }
 
+  /**
+   * The shadow root, created the first time something is drawn.
+   *
+   * The content script runs on every page in the browser, but auto-translate is
+   * per-site and most sites are off. Building this in the constructor put a
+   * custom element into every document, added six global listeners to it, and —
+   * the part that actually costs something — started a requestAnimationFrame
+   * loop that never stops, on tabs that were never going to translate anything.
+   * Deferring it means a page nobody opted in gets no DOM node and no frame
+   * callbacks at all, while the first `attach`/`status` sets everything up
+   * exactly as before.
+   */
+  private get root(): ShadowRoot {
+    return this.shadow ?? this.mount();
+  }
+
+  private mount(): ShadowRoot {
     const host = document.createElement('manga-translator-root');
     // Closed: nothing on the page should be able to reach in and restyle or
     // scrape our nodes, and we never need to reach in from outside either.
-    this.root = host.attachShadow({ mode: 'closed' });
+    const shadow = host.attachShadow({ mode: 'closed' });
+    this.shadow = shadow;
     const style = document.createElement('style');
     style.textContent = OVERLAY_CSS;
-    this.root.append(style);
+    shadow.append(style);
     document.body.append(host);
 
     const markDirty = () => {
@@ -95,6 +115,7 @@ export class Overlay {
     addEventListener('blur', this.onPointerOut);
 
     requestAnimationFrame(this.tick);
+    return shadow;
   }
 
   updateSettings(settings: Settings): void {
