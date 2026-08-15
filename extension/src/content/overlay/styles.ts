@@ -49,8 +49,20 @@ export const OVERLAY_CSS = `
   word-break: break-word;
   overflow-wrap: anywhere;
   text-wrap: balance;
-  pointer-events: auto;
+  /* Never auto, at any nesting depth.
+   *
+   * imhentai turns the page by clicking the image (a.next_img wraps it). A box
+   * with pointer-events:auto becomes a hit target even though :host and
+   * .mt-layer are none — that is how the property works, a descendant can opt
+   * back in — and the click dies on the overlay instead of reaching the link.
+   * Page turning then silently stops working over every translated bubble,
+   * which is a far worse bug than the one hover was solving. Hover is resolved
+   * by hit-testing pointermove in overlay.ts instead. */
+  pointer-events: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
+
+.mt-text { transition: opacity 140ms ease; }
 
 .mt-box.refused {
   background: rgba(255, 236, 214, 0.95);
@@ -61,7 +73,20 @@ export const OVERLAY_CSS = `
   content: "ถูกปฏิเสธ";
   font-size: 2cqw;
   color: #a3631f;
+  transition: opacity 140ms ease;
 }
+
+/* Peek: the pointer is over this box, so get out of the way of the artwork.
+   The background and the translated text fade separately rather than the whole
+   box getting one opacity, because opacity on the parent would cap the source
+   text below too and there would be no way to keep it readable. */
+.mt-box.peek { background-color: rgba(255, 255, 255, 0.04); }
+.mt-box.peek .mt-text { opacity: 0.1; }
+.mt-box.refused.peek {
+  background-color: rgba(255, 236, 214, 0.06);
+  border-color: rgba(208, 138, 58, 0.25);
+}
+.mt-box.refused.peek::after { opacity: 0.15; }
 
 .mt-src {
   display: none;
@@ -75,8 +100,15 @@ export const OVERLAY_CSS = `
   writing-mode: horizontal-tb;
 }
 
-.mt-box[data-hover="1"]:hover .mt-src { display: flex; }
-.mt-box[data-hover="1"]:hover .mt-text { visibility: hidden; }
+.mt-box.src .mt-src { display: flex; }
+.mt-box.src .mt-text { visibility: hidden; }
+
+/* Both at once: a solid plate would re-cover the art the peek just uncovered,
+   so the source is drawn straight onto the picture with an outline instead. */
+.mt-box.src.peek .mt-src {
+  background: transparent;
+  text-shadow: 0 0 2px #000, 0 1px 3px #000, 0 0 7px #000;
+}
 
 .mt-status {
   position: absolute;

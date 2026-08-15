@@ -1,7 +1,7 @@
 import { computeContentBox } from '../../core/geometry';
 import type { OverlayBlock } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
-import type { Size } from '../../types';
+import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
 
 /**
@@ -20,10 +20,23 @@ import { OVERLAY_CSS } from './styles';
  * a failure worse than showing nothing, because the reader has no way to notice.
  */
 
+/** Where a layer currently sits, in page coordinates. */
+interface Placement {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface Mounted {
   hash: string;
   layer: HTMLDivElement;
   target: HTMLImageElement;
+  /** The box elements, in the order they were rendered and painted. */
+  boxes: HTMLElement[];
+  /** Their normalized rects, so hover hit-testing needs no DOM reads at all. */
+  rects: NormRect[];
+  placement: Placement | null;
 }
 
 export class Overlay {
@@ -66,6 +79,21 @@ export class Overlay {
     // capture:true so scrolling inside a reader's own scroll container counts.
     addEventListener('scroll', markDirty, { passive: true, capture: true });
     addEventListener('resize', markDirty, { passive: true });
+
+    // Hover is watched, not received.
+    //
+    // The layer cannot take pointer events without stealing the click that
+    // turns the page, so the pointer's position is observed on the way past and
+    // the box under it is worked out arithmetically. `passive` and `capture`
+    // mean a site that stops propagation, or calls preventDefault, changes
+    // nothing about what we see, and we never affect its own handlers.
+    addEventListener('pointermove', this.onPointerMove, { passive: true, capture: true });
+    addEventListener('pointerdown', this.onPointerMove, { passive: true, capture: true });
+    // Leaving the window has no pointermove of its own, and a panel left faded
+    // after the mouse is gone looks like a rendering bug.
+    document.addEventListener('pointerleave', this.onPointerOut, { capture: true });
+    addEventListener('blur', this.onPointerOut);
+
     requestAnimationFrame(this.tick);
   }
 
@@ -97,7 +125,14 @@ export class Overlay {
       .join('');
 
     this.root.append(layer);
-    this.mounted.set(target, { hash, layer, target });
+    this.mounted.set(target, {
+      hash,
+      layer,
+      target,
+      boxes: Array.from(layer.children) as HTMLElement[],
+      rects: result.blocks.map((b) => b.rect),
+      placement: null,
+    });
     this.track(target);
     this.dirty = true;
     return true;
@@ -106,6 +141,9 @@ export class Overlay {
   detach(target: HTMLImageElement): void {
     this.mounted.get(target)?.layer.remove();
     this.mounted.delete(target);
+    // The faded box may have just been removed from the document along with its
+    // layer; holding the reference would leave hover stuck on a dead node.
+    if (this.hovered && !this.hovered.isConnected) this.hovered = null;
     this.untrack(target);
   }
 
@@ -181,7 +219,7 @@ export class Overlay {
           this.detach(target);
           continue;
         }
-        place(m.layer, target);
+        m.placement = place(m.layer, target);
       }
       for (const [target, el] of this.statuses) {
         if (!target.isConnected) {
@@ -192,9 +230,87 @@ export class Overlay {
         }
         place(el, target, true);
       }
+      // Everything moved, so what the pointer is over may have changed even
+      // though it did not move — scrolling with the wheel, or a page turn while
+      // the mouse rests on a bubble.
+      this.resolveHover();
     }
     requestAnimationFrame(this.tick);
   };
+
+  /* ---------------- hover, without taking the pointer ---------------- */
+
+  /** The box currently faded and/or showing its source. At most one. */
+  private hovered: HTMLElement | null = null;
+  /** Last seen pointer position, in page coordinates. */
+  private pointer: { x: number; y: number } | null = null;
+
+  private readonly onPointerMove = (ev: PointerEvent): void => {
+    this.pointer = { x: ev.clientX + scrollX, y: ev.clientY + scrollY };
+    this.resolveHover();
+  };
+
+  private readonly onPointerOut = (): void => {
+    this.pointer = null;
+    this.setHovered(null);
+  };
+
+  /** Does any setting actually want to know where the pointer is? */
+  private hoverWanted(): boolean {
+    return (
+      this.settings.display.peekOnHover ||
+      this.settings.display.mode === 'target-plus-source-on-hover'
+    );
+  }
+
+  private resolveHover(): void {
+    if (!this.hoverWanted() || this.mounted.size === 0) return this.setHovered(null);
+    const p = this.pointer;
+    this.setHovered(p ? this.boxAt(p.x, p.y) : null);
+  }
+
+  /**
+   * Which box is under a page-space point.
+   *
+   * Pure arithmetic over cached geometry: no getBoundingClientRect, no
+   * elementFromPoint — which would not work anyway, since it honours
+   * `pointer-events: none` and would look straight through the layer.
+   *
+   * Ties go to whatever paints on top, which is the last matching box of the
+   * last mounted layer. That is the box the reader sees under the cursor, so
+   * that is the one that gets out of the way; the others stay put.
+   */
+  private boxAt(x: number, y: number): HTMLElement | null {
+    let hit: HTMLElement | null = null;
+    // Map iteration is insertion order, and later layers paint above earlier
+    // ones, so the last match wins. Iterating forward and keeping the last one
+    // avoids allocating a reversed copy on every pointer move.
+    for (const m of this.mounted.values()) {
+      const p = m.placement;
+      if (!p || p.w <= 0 || p.h <= 0) continue;
+      if (x < p.x || x > p.x + p.w || y < p.y || y > p.y + p.h) continue;
+
+      for (let i = 0; i < m.rects.length; i++) {
+        const r = m.rects[i];
+        const box = m.boxes[i];
+        if (!r || !box) continue;
+        const bx = p.x + r.x * p.w;
+        const by = p.y + r.y * p.h;
+        if (x >= bx && x <= bx + r.w * p.w && y >= by && y <= by + r.h * p.h) hit = box;
+      }
+    }
+    return hit;
+  }
+
+  private setHovered(next: HTMLElement | null): void {
+    if (next === this.hovered) return;
+    this.hovered?.classList.remove('peek', 'src');
+    this.hovered = next;
+    if (!next) return;
+    if (this.settings.display.peekOnHover) next.classList.add('peek');
+    // Only set on boxes that actually have source text to show.
+    if (next.dataset.hover === '1') next.classList.add('src');
+  }
 
   /**
    * One box.
@@ -243,7 +359,7 @@ export class Overlay {
  * with `object-fit: contain`, so trusting getBoundingClientRect would shift
  * every bubble by the size of the letterbox bars.
  */
-function place(el: HTMLElement, target: HTMLImageElement, corner = false): void {
+function place(el: HTMLElement, target: HTMLImageElement, corner = false): Placement {
   const rect = target.getBoundingClientRect();
   const fit = getComputedStyle(target).objectFit;
   const content = computeContentBox(
@@ -262,6 +378,7 @@ function place(el: HTMLElement, target: HTMLImageElement, corner = false): void 
     el.style.width = `${content.w.toFixed(1)}px`;
     el.style.height = `${content.h.toFixed(1)}px`;
   }
+  return { x, y, w: content.w, h: content.h };
 }
 
 function escapeHtml(s: string): string {

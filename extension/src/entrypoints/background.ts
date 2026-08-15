@@ -72,15 +72,8 @@ export default defineBackground(() => {
       const controller = new AbortController();
       inflight.set(raw.jobId, controller);
 
-      // Two lanes, not one queue.
-      //
-      // Everything used to run on a single chain, which meant the page the
-      // reader had just turned to waited behind whatever the prefetcher had
-      // guessed — measured at up to 3 s of watching a spinner while the answer
-      // for that exact page was already sitting in the cache. A speculative job
-      // now runs beside the reader's rather than in front of it. The GPU is
-      // still strictly one page at a time (see withDetectSlot); what overlaps is
-      // the waiting — a network fetch, a Gemini call, an IndexedDB read.
+      // Serialised globally: detection is GPU/CPU bound and running two pages at
+      // once makes both slower while making the visible one arrive later.
       void enqueue(async () => {
         // Jobs are serialised, so by the time this runs the tab may have turned
         // the page and cancelled it. Starting anyway would spend a request from
