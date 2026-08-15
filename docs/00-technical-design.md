@@ -1249,8 +1249,8 @@ MVP ผ่านเมื่อ — บนหน้ามังงะจริ�
 interface Settings {
   version: 3;                                  // สำหรับ migration
 
-  enabled: boolean;
-  autoTranslate: boolean;                      // ปิด = ต้องกดแปลเอง
+  enabled: boolean;                            // kill switch ระดับเบราว์เซอร์
+  autoSites: string[];                         // hostname ที่เปิดแปลอัตโนมัติ · ไม่อยู่ในรายการ = ปิด (D-029)
 
   lang: {
     source: LangCode | 'auto';                 // default 'auto'
