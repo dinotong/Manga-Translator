@@ -50,5 +50,14 @@ __pycache__/
 .venv/
 venv/
 
-# Packed builds handed to friends (rebuildable, 27 MB)
+# Packed builds handed to friends.
+#
+# Every one of these is `npm run build` plus an archiver, so committing one
+# trades ~27 MB of permanent repository weight for a file anyone can recreate
+# in seconds. Git keeps blobs forever, so this is easier to prevent than to
+# undo. *.zip and *.crx are already covered further up with the build output.
 *.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
