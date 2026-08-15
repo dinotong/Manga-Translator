@@ -76,17 +76,23 @@ export const OVERLAY_CSS = `
   transition: opacity 140ms ease;
 }
 
-/* Peek: the pointer is over this box, so get out of the way of the artwork.
-   The background and the translated text fade separately rather than the whole
-   box getting one opacity, because opacity on the parent would cap the source
-   text below too and there would be no way to keep it readable. */
-.mt-box.peek { background-color: rgba(255, 255, 255, 0.04); }
-.mt-box.peek .mt-text { opacity: 0.1; }
-.mt-box.refused.peek {
-  background-color: rgba(255, 236, 214, 0.06);
-  border-color: rgba(208, 138, 58, 0.25);
+/* Peek: the pointer is over this box, so get completely out of the way.
+   Fully transparent, not merely faint — the point of peeking is to look at the
+   art, and a ghost of the translation lying across it is the thing being
+   complained about, not a lighter version of the solution.
+   The background and the text still fade as separate rules rather than one
+   opacity on the parent, because the optional source-text overlay sits inside
+   this box and must stay readable when that mode is on. */
+.mt-box.peek {
+  background-color: transparent;
+  border-color: transparent;
 }
-.mt-box.refused.peek::after { opacity: 0.15; }
+.mt-box.peek .mt-text { opacity: 0; }
+.mt-box.refused.peek {
+  background-color: transparent;
+  border-color: transparent;
+}
+.mt-box.refused.peek::after { opacity: 0; }
 
 .mt-src {
   display: none;

@@ -121,7 +121,10 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   ocr: { runtime: 'auto', preset: 'balanced', dilateRatio: 0.01 },
   display: {
-    mode: 'target-plus-source-on-hover',
+    // 'target-only', not the source-on-hover variant: hovering is for looking at
+    // the picture, and swapping one block of text for another leaves the art
+    // just as hidden. Anyone who wants the Japanese can still turn it on.
+    mode: 'target-only',
     fontScale: 1,
     boxOpacity: 0.92,
     peekOnHover: true,
