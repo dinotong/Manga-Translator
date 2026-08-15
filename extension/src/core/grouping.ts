@@ -41,23 +41,23 @@ export const GROUPING_DEFAULTS: Record<Direction, GroupingThresholds> = {
 /**
  * Per-language adjustments on top of the per-direction defaults.
  *
- * Latin comics enlarge or embolden individual words for emphasis constantly,
- * inside a sentence that is otherwise one size — "I can't BELIEVE it". At the
- * shared 1.7 ratio the emphasised word is judged a different block, so the
- * sentence reaches the translator in pieces and comes back as pieces. Japanese
- * leans on other devices for emphasis far more than on size, so it keeps the
- * tighter value, where a genuine size jump usually does mean a sound effect
- * that should not be merged into dialogue.
+ * Empty on purpose.
  *
- * Only the difference that can be argued from how the scripts are actually set
- * is listed here. Everything else stays shared until a real page shows it
- * needs to differ — a threshold invented without evidence is just a number
- * nobody dares change later.
+ * English horizontal text briefly carried maxSizeRatio 2.3, reasoned from the
+ * way Latin comics enlarge a word for emphasis inside an otherwise even
+ * sentence. Read on real pages it was worse: merging a body line with a much
+ * taller emphasised one produces a block whose height comes from the big word,
+ * and the whole sentence is then fitted into it — the owner reported the result
+ * as unreadable and the previous behaviour as better. Reverted.
+ *
+ * The plumbing stays because the question is still open, not settled: scripts
+ * plainly are set differently, and this is where that would be expressed. But
+ * the next value here has to come from looking at pages, not from reasoning
+ * about typography — that is exactly what produced the reverted one.
  */
-const LANG_OVERRIDES: Partial<Record<LangCode, Partial<Record<Direction, Partial<GroupingThresholds>>>>> =
-  {
-    en: { horizontal: { maxSizeRatio: 2.3 } },
-  };
+const LANG_OVERRIDES: Partial<
+  Record<LangCode, Partial<Record<Direction, Partial<GroupingThresholds>>>>
+> = {};
 
 /** Thresholds for one language, merged over the per-direction defaults. */
 export function thresholdsFor(lang: LangCode): Record<Direction, GroupingThresholds> {

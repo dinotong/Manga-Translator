@@ -139,34 +139,21 @@ describe('readingOrder', () => {
 });
 
 describe('thresholdsFor', () => {
-  it('gives Japanese the shared defaults', () => {
-    expect(thresholdsFor('ja')).toEqual(GROUPING_DEFAULTS);
+  it('gives every language the shared defaults', () => {
+    // LANG_OVERRIDES is empty. An English-only maxSizeRatio of 2.3 was tried and
+    // reverted: it merged a body line with a much taller emphasised one, and the
+    // sentence was then fitted into a block sized by the big word, which read
+    // worse on real pages than leaving them apart.
+    for (const lang of ['ja', 'en', 'ko', 'zh'] as const) {
+      expect(thresholdsFor(lang)).toEqual(GROUPING_DEFAULTS);
+    }
   });
 
-  it('lets an emphasised Latin word stay in its sentence', () => {
-    // "I can't BELIEVE it" — the shouted word is set larger than the rest of the
-    // same balloon. At the Japanese ratio it is judged a separate block and the
-    // sentence reaches the translator in pieces.
-    const body = row(10, 100, 200, 20, 0.9);
-    const shouted = row(10, 126, 200, 42, 0.9); // 2.1x the cap height
-
-    expect(shouldMerge(body, shouted, thresholdsFor('ja').horizontal)).toBe(false);
-    expect(shouldMerge(body, shouted, thresholdsFor('en').horizontal)).toBe(true);
-  });
-
-  it('still refuses a Latin size jump big enough to be a sound effect', () => {
+  it('still refuses a size jump big enough to be a sound effect', () => {
     const body = row(10, 100, 200, 20, 0.9);
     const sfx = row(10, 130, 200, 90, 0.9); // 4.5x — not dialogue
 
     expect(shouldMerge(body, sfx, thresholdsFor('en').horizontal)).toBe(false);
-  });
-
-  it('leaves vertical thresholds alone for every language', () => {
-    // The override is about how Latin sets emphasis; nothing about it should
-    // reach the column-merging rules that Japanese depends on.
-    for (const lang of ['ja', 'en', 'ko', 'zh'] as const) {
-      expect(thresholdsFor(lang).vertical).toEqual(GROUPING_DEFAULTS.vertical);
-    }
   });
 
   it('defaults to Japanese when the caller passes no language', () => {
