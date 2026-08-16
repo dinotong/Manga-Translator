@@ -58,3 +58,27 @@ export function blockDirection(
 export function glyphSize(rect: PixRect, direction: Direction): number {
   return direction === 'vertical' ? rect.w : rect.h;
 }
+
+/**
+ * Apparent glyph size of a whole block, as the median of its lines'.
+ *
+ * A block's own width is not a substitute. One column is a glyph wide and a
+ * five-column bubble is five, so anything downstream that reasons in glyph units
+ * — how far apart two blocks sit, whether a block is a fragment or a bubble —
+ * would be wrong by a factor that depends on the very thing it is trying to
+ * measure. See core/merge-proposals.ts, which is the reason this exists.
+ *
+ * Median rather than mean: a bubble's last column is often a single character,
+ * and detector boxes hug the ink, so the outlier is routine rather than rare.
+ * Zero for a block with no lines, which callers must treat as "unknown" rather
+ * than "tiny".
+ */
+export function blockGlyph(
+  lines: readonly { rect: PixRect; direction: Direction }[],
+  direction: Direction,
+): number {
+  if (lines.length === 0) return 0;
+  const sizes = lines.map((l) => glyphSize(l.rect, direction)).sort((a, b) => a - b);
+  const mid = sizes.length >> 1;
+  return sizes.length % 2 === 1 ? sizes[mid]! : (sizes[mid - 1]! + sizes[mid]!) / 2;
+}

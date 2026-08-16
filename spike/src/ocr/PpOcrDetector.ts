@@ -17,7 +17,7 @@ import {
 } from '../core/components';
 import { DIRECTION_DEFAULTS, detectDirection } from '../core/direction';
 import { suppressOverlaps } from '../core/geometry';
-import { expandBox, planDetInput, rgbaToNchw } from '../core/preprocess';
+import { expandBox, planDetInput, rgbaToNchw, shrinkBox } from '../core/preprocess';
 import type { LangCode, TextLine } from '../types';
 import { ModelNotDownloadedError, type TextDetector } from './types';
 
@@ -69,13 +69,14 @@ export const PP_OCR_DEFAULTS: PpOcrOptions = {
   maxSide: 960,
   expandRatio: 0.1,
   components: { ...COMPONENT_DEFAULTS, threshold: 0.3, minArea: 20, minSide: 3 },
-  // 1.5% of the long edge. Measured over all 18 fixtures: 0.01 leaves stray
-  // fragments (the test page splits into 10 regions where 8 are real), 0.015
-  // absorbs them, and 0.02 starts collapsing distinct regions on busier pages
-  // (006: 13->9, 007: 11->8) without improving the test page at all. See
-  // DECISIONS D-009.
-  dilateRatio: 0.015,
-  nmsIou: 0.6,
+  // D-009 measured 0.015 over 18 fixtures and picked it. The extension ships
+  // 0.01, and the harness's job is to show what the extension will do, so the
+  // default follows the extension and the sweep stays available in the UI.
+  dilateRatio: 0.01,
+  // Off, because the extension no longer runs it: `suppressOverlaps` is still in
+  // core/geometry.ts but nothing in extension/src calls it. Leaving it on here
+  // would make the harness quietly drop boxes the extension keeps.
+  nmsIou: 1,
   numThreads: 1,
 };
 
@@ -178,13 +179,20 @@ export class PpOcrDetector implements TextDetector {
     const mask = radius > 0 ? dilate(probMap, input, radius, radius) : probMap;
 
     const lines = connectedComponents(mask, input, this.opts.components).map((component) => {
+      // Shrink by the radius that was dilated on, in model space and before
+      // scaling. Dilation is how lines are *found*, not how they are measured;
+      // leaving it in inflates every box by the structuring element, which at a
+      // 14px radius more than doubles a column of vertical Japanese. The
+      // extension does this — see extension/src/core/preprocess.ts — so a
+      // harness that skips it groups differently from what ships.
+      const tight = shrinkBox(component.rect, radius);
       // Model space -> source bitmap space. Per-axis, because stride rounding
       // makes the two scales slightly different.
       const scaled = {
-        x: component.rect.x * scaleBack.x,
-        y: component.rect.y * scaleBack.y,
-        w: component.rect.w * scaleBack.x,
-        h: component.rect.h * scaleBack.y,
+        x: tight.x * scaleBack.x,
+        y: tight.y * scaleBack.y,
+        w: tight.w * scaleBack.x,
+        h: tight.h * scaleBack.y,
       };
       const rect = expandBox(scaled, this.opts.expandRatio, source);
       return { rect, score: component.score, direction: detectDirection(rect, dirOpts) };

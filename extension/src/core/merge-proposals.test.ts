@@ -161,7 +161,11 @@ describe('planMerges', () => {
 
     expect(plan.accepted).toHaveLength(1);
     expect(plan.accepted[0]!.members).toEqual([0, 1]);
+    expect(plan.accepted[0]!.proposal).toBe(0);
     expect(plan.rejected[0]!.reason).toBe('already-merged');
+    // The index back into the input is what lets the caller find the text that
+    // came with the claim, past the gaps the rejections leave.
+    expect(plan.rejected[0]!.proposal).toBe(1);
   });
 
   it('does nothing at all when the model proposes nothing', () => {

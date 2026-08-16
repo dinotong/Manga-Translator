@@ -77,6 +77,14 @@ export interface AcceptedMerge {
   /** Ascending, which is reading order — the blocks arrive already sorted. */
   members: number[];
   rect: NormRect;
+  /**
+   * Which proposal this was, by position in the input.
+   *
+   * The caller holds the text that came with the claim, and rejected proposals
+   * leave gaps in `accepted`, so an index back into the input is the only way to
+   * reunite the two without matching on member lists.
+   */
+  proposal: number;
 }
 
 export type MergeRejection =
@@ -93,6 +101,7 @@ export type MergeRejection =
 export interface RejectedMerge {
   members: number[];
   reason: MergeRejection;
+  proposal: number;
 }
 
 export interface MergePlan {
@@ -184,16 +193,20 @@ export function planMerges(
   // which overlapping claim happened to be checked first.
   const taken = new Set<number>();
 
-  for (const proposal of proposals) {
+  proposals.forEach((proposal, index) => {
     const members = [...new Set(proposal.members)].sort((a, b) => a - b);
     const reason = veto(blocks, members, taken, k, limits);
     if (reason) {
-      rejected.push({ members, reason });
-      continue;
+      rejected.push({ members, reason, proposal: index });
+      return;
     }
     for (const m of members) taken.add(m);
-    accepted.push({ members, rect: unionAll(members.map((m) => blocks[m]!.rect)) });
-  }
+    accepted.push({
+      members,
+      rect: unionAll(members.map((m) => blocks[m]!.rect)),
+      proposal: index,
+    });
+  });
 
   return { accepted, rejected };
 }

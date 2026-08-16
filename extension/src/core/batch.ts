@@ -210,6 +210,102 @@ export function routeItems(
 }
 
 /* ------------------------------------------------------------------ */
+/* Groups: the model saying several crops are one continuous text        */
+/* ------------------------------------------------------------------ */
+
+/** A group exactly as it arrives, before anything is believed about it. */
+export interface ReadGroup {
+  ids?: unknown;
+  src?: unknown;
+  out?: unknown;
+}
+
+export interface RoutedGroup {
+  /** Block indices on one page, ascending. */
+  blocks: number[];
+  /** The whole continuous text, as the model read it. */
+  src: string;
+  /** One translation of that whole text. */
+  out: string;
+}
+
+/**
+ * What the request says about groups, in one place so the harness and the
+ * extension cannot ask for different things and be compared to each other.
+ *
+ * Two properties of this wording are load-bearing. It insists that **every image
+ * still gets its own item**, so a group that is later vetoed on geometry costs
+ * nothing at all — the page falls back to exactly the answer the model would
+ * have given before groups existed. And it says out loud that **no groups is the
+ * normal answer**, because a model asked to find something will find something.
+ */
+export const GROUP_INSTRUCTIONS: readonly string[] = [
+  'Also return "groups", for one specific case:',
+  '  Sometimes one sentence is split across several images — most often a',
+  '  handwritten note, an afterword, or a caption written over the artwork,',
+  '  whose columns were cut apart before you saw them. When, and only when, the',
+  '  text of one image continues mid-sentence into another, add an entry:',
+  '    ids - the ids of those images, in reading order',
+  '    src - the whole continuous source text, joined',
+  '    out - one natural translation of the whole thing',
+  '',
+  'Rules for groups:',
+  '- Most pages have none. An empty list is the normal and expected answer.',
+  '- Never group two different speakers.',
+  '- Never group a sound effect with dialogue.',
+  '- Two complete sentences in two bubbles are not a group, however related.',
+  '- Never put images from different pages in one group.',
+  '- Still return a normal item for every image, grouped ones included.',
+];
+
+/**
+ * Sort the model's group claims onto the pages they belong to.
+ *
+ * The same discipline as `routeItems`, and for a sharper reason: a group is a
+ * claim that several crops are one sentence, and a group whose ids straddle two
+ * pages is claiming that a sentence continues from one book into another. That
+ * cannot be true — the pages in a batch are unrelated by construction, which the
+ * prompt says out loud — so such a group is dropped rather than trimmed to the
+ * page that happens to hold most of it.
+ *
+ * Nothing here decides whether a group is *right*. That is core/merge-proposals.
+ */
+export function routeGroups(
+  cropsPerPage: readonly number[],
+  groups: readonly ReadGroup[],
+): RoutedGroup[][] {
+  const out: RoutedGroup[][] = cropsPerPage.map(() => []);
+
+  for (const group of groups) {
+    if (!Array.isArray(group.ids)) continue;
+
+    const parsed = group.ids.map(parseCropId);
+    if (parsed.length === 0 || parsed.some((p) => p === null)) continue;
+
+    const page = parsed[0]!.page;
+    if (parsed.some((p) => p!.page !== page)) continue; // spans pages: not a sentence
+    const bucket = out[page];
+    if (!bucket) continue;
+
+    const blocks = parsed.map((p) => p!.block);
+    // An id for a crop that was never sent means the model was numbering and got
+    // it wrong, which disqualifies the whole claim rather than the one id.
+    if (blocks.some((b) => b >= (cropsPerPage[page] ?? 0))) continue;
+
+    const unique = [...new Set(blocks)].sort((a, b) => a - b);
+    if (unique.length < 2) continue;
+
+    bucket.push({
+      blocks: unique,
+      src: typeof group.src === 'string' ? group.src : '',
+      out: typeof group.out === 'string' ? group.out : '',
+    });
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Telling the model where the pages divide                             */
 /* ------------------------------------------------------------------ */
 

@@ -1,6 +1,8 @@
 import type { BenchRun } from '../bench/store';
 import { fmtMs, summarize } from '../bench/timer';
-import type { PipelineResult } from '../types';
+import { placePanels, type PlacedPanel } from '../core/panel-layout';
+import { panelRect, plateAlphaOver, plateInPanel } from '../core/panel-shape';
+import type { GroupingReport, HarnessBlock, HarnessResult } from '../pipeline';
 
 /**
  * Boxes are positioned in percent inside a container sized by the image itself.
@@ -14,14 +16,24 @@ export function renderResult(
   root: HTMLElement,
   fileName: string,
   imageUrl: string,
-  result: PipelineResult & { warning: string | null },
+  result: HarnessResult,
 ): void {
   const { timings: t, blocks } = result;
   const perBlock = summarize(t.perBlock);
   const card = document.createElement('article');
   card.className = 'card';
 
-  const boxes = blocks.map((b, i) => renderBox(b, i, result.natural)).join('');
+  // Exactly what the extension draws: the detected box widened into a panel the
+  // Thai can be set across, then pushed off its neighbours. Same two modules,
+  // same order, same numbers — so a page that looks wrong here looks wrong
+  // there, which is the only reason this harness is worth running.
+  const aspect = result.natural.w > 0 ? result.natural.h / result.natural.w : 1;
+  const placed = placePanels(
+    blocks.map((b) => ({ anchor: b.rect, panel: panelRect(b.rect, b.direction, aspect) })),
+    aspect,
+  );
+
+  const boxes = blocks.map((b, i) => renderBox(b, placed[i]!, i, aspect)).join('');
 
   const rows: [string, number, boolean][] = [
     ['decode + resize', t.decode, false],
@@ -65,13 +77,14 @@ export function renderResult(
                 ? '<li class="dir">ไม่พบข้อความ</li>'
                 : blocks
                     .map(
-                      (b) =>
-                        `<li>${escapeHtml(b.text)} <span class="dir">${b.direction}${b.score < 0.7 ? ` · low ${b.score.toFixed(2)}` : ''}</span></li>`,
+                      (b, i) =>
+                        `<li>${escapeHtml(b.text)} <span class="dir">${b.direction}${b.parts > 1 ? ` · รวม ${b.parts} กล่อง` : ''}${placed[i]?.trimmed ? ' · หด' : ''}${placed[i]?.crowded ? ' · ซ้อน' : ''}${b.score < 0.7 ? ` · low ${b.score.toFixed(2)}` : ''}</span></li>`,
                     )
                     .join('')
             }
           </ol>
         </div>
+        ${renderGrouping(result.grouping, placed)}
         <div class="side">
           <h3>Engines</h3>
           <table>
@@ -95,19 +108,37 @@ function verdict(totalMs: number): string {
 }
 
 /**
- * One overlay box, with the translated text laid into it.
+ * One overlay panel, with the translated text laid into it.
  *
  * This is the extension's overlay strategy rehearsed early: geometry in
  * percentages so it survives any rendered size, and font size in `cqw` so the
  * text scales with the image instead of needing JS on resize. If this breaks
  * when the window is dragged, better to find out in the harness than in M2.
+ *
+ * Two rectangles, as in the extension. The **panel** is where the Thai is set,
+ * widened for vertical source text because a three-percent-wide column would
+ * otherwise wrap Thai to one glyph per line. The **plate** is the detected box
+ * itself, drawn opaque inside the panel, because that is the only part that has
+ * to hide anything.
  */
+/**
+ * Harness stand-ins for `display.boxOpacity` and the panel opacity beside it.
+ *
+ * Fixed here rather than wired to a control: the harness is checking geometry,
+ * and two more sliders would only make it harder to tell a layout bug from a
+ * setting.
+ */
+const PANEL_OPACITY = 0.55;
+const PLATE_OPACITY = 0.94;
+
 function renderBox(
-  b: PipelineResult['blocks'][number],
+  b: HarnessBlock,
+  placed: PlacedPanel,
   index: number,
-  natural: { w: number; h: number },
+  aspect: number,
 ): string {
   const pct = (v: number) => (v * 100).toFixed(3);
+  const panel = placed.rect;
 
   // Font size in cqw, from how much text actually has to fit.
   //
@@ -116,9 +147,8 @@ function renderBox(
   // And cqw is a fraction of the container's WIDTH only — so a box's HEIGHT has
   // to be converted through the image aspect ratio, or every tall vertical
   // bubble is judged far shorter than it is and the text comes out tiny.
-  const aspect = natural.w > 0 ? natural.h / natural.w : 1;
-  const wCqw = b.rect.w * 100;
-  const hCqw = b.rect.h * 100 * aspect;
+  const wCqw = panel.w * 100;
+  const hCqw = panel.h * 100 * aspect;
 
   // A box holds about w*h / (1.2*s^2) roughly-square glyphs at size s, with 1.2
   // line spacing. Solve for s at N characters:
@@ -129,12 +159,93 @@ function renderBox(
   // two-word bubble from becoming a poster.
   const fs = Math.max(1.2, Math.min(6, ideal * 0.92));
 
+  const plate = plateInPanel(b.rect, panel);
+  // The plate sits *inside* the panel, so painting both at their nominal values
+  // would composite darker than either asked for. `plateAlphaOver` returns the
+  // alpha that makes the stack come out at max(plate, panel) — and 0, meaning
+  // "do not draw it at all", when the panel already covers everything the plate
+  // would. Exercised here so the harness shows the same greys the reader sees.
+  const plateAlpha = plateAlphaOver(PLATE_OPACITY, PANEL_OPACITY);
+  const flags = [
+    b.parts > 1 ? 'merged' : '',
+    placed.trimmed ? 'trimmed' : '',
+    placed.crowded ? 'crowded' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   const title = b.source ? ` title="${escapeHtml(b.source)}"` : '';
   return `
-    <div class="box ${b.direction}"
-         style="left:${pct(b.rect.x)}%;top:${pct(b.rect.y)}%;width:${pct(b.rect.w)}%;height:${pct(b.rect.h)}%"${title}>
-      <span class="idx">${index + 1}</span>
+    <div class="box ${b.direction} ${flags}"
+         style="left:${pct(panel.x)}%;top:${pct(panel.y)}%;width:${pct(panel.w)}%;height:${pct(panel.h)}%;background:rgba(255,255,255,${PANEL_OPACITY})"${title}>
+      ${
+        plateAlpha > 0
+          ? `<span class="plate" style="left:${pct(plate.x)}%;top:${pct(plate.y)}%;width:${pct(plate.w)}%;height:${pct(plate.h)}%;background:rgba(255,255,255,${plateAlpha.toFixed(3)})"></span>`
+          : ''
+      }
+      <span class="idx">${index + 1}${b.parts > 1 ? ` ×${b.parts}` : ''}</span>
       <span class="tx" style="font-size:${fs.toFixed(2)}cqw">${escapeHtml(b.text)}</span>
+    </div>`;
+}
+
+const REJECTION_TH: Record<string, string> = {
+  'too-few': 'ไม่ถึง 2 กล่อง',
+  'too-many': 'มากเกินไป',
+  'bad-index': 'id ไม่มีอยู่จริง',
+  'already-merged': 'กล่องถูกรวมไปแล้ว',
+  'mixed-direction': 'คนละแนว',
+  'glyph-mismatch': 'ขนาดตัวอักษรต่างกัน',
+  'not-a-fragment': 'เป็น bubble เต็มๆ ไม่ใช่เศษ',
+  'not-adjacent': 'อยู่ไกลกันเกินไป',
+  'union-too-large': 'กล่องรวมใหญ่เกิน',
+};
+
+/**
+ * What the model asked for and what geometry did about it.
+ *
+ * The point of showing the rejections, not just the merges: a veto that fires on
+ * every ordinary page is the difference between "the model is being sensible"
+ * and "the limits are wrong", and there is no way to tell those apart from the
+ * picture alone.
+ */
+function renderGrouping(report: GroupingReport, placed: readonly PlacedPanel[]): string {
+  const crowded = placed.filter((p) => p.crowded).length;
+  const trimmed = placed.filter((p) => p.trimmed).length;
+  const quiet =
+    report.accepted.length === 0 && report.rejected.length === 0 && crowded === 0 && trimmed === 0;
+
+  return `
+    <div class="side">
+      <h3>Grouping &amp; layout</h3>
+      <table>
+        <tr><td>กล่องที่ตรวจเจอ</td><td>${report.before}</td></tr>
+        <tr class="${report.after !== report.before ? 'hot' : ''}"><td>กล่องที่วาดจริง</td><td>${report.after}</td></tr>
+        <tr><td>โมเดลขอรวม</td><td>${report.accepted.length + report.rejected.length}</td></tr>
+        <tr><td>รวมให้ / ปฏิเสธ</td><td>${report.accepted.length} / ${report.rejected.length}</td></tr>
+        <tr><td>ถูกหดเพราะชนกัน</td><td>${trimmed}</td></tr>
+        <tr class="${crowded > 0 ? 'hot' : ''}"><td>ยังซ้อนกันอยู่</td><td>${crowded}</td></tr>
+      </table>
+      ${quiet ? '<p class="dir">หน้านี้ไม่มีอะไรถูกรวมและไม่มีอะไรชนกัน — คือผลลัพธ์ปกติ</p>' : ''}
+      ${
+        report.accepted.length > 0
+          ? `<ol class="blocks">${report.accepted
+              .map(
+                (a) =>
+                  `<li>✅ รวม ${a.blocks.map((b) => b + 1).join('+')} → ${escapeHtml(a.out || a.src)}</li>`,
+              )
+              .join('')}</ol>`
+          : ''
+      }
+      ${
+        report.rejected.length > 0
+          ? `<ol class="blocks">${report.rejected
+              .map(
+                (r) =>
+                  `<li>🚫 ${r.blocks.map((b) => b + 1).join('+')} <span class="dir">${REJECTION_TH[r.reason] ?? r.reason}</span></li>`,
+              )
+              .join('')}</ol>`
+          : ''
+      }
     </div>`;
 }
 

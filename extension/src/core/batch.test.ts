@@ -6,6 +6,7 @@ import {
   pageHeader,
   parseCropId,
   planBatch,
+  routeGroups,
   routeItems,
 } from './batch';
 
@@ -188,5 +189,57 @@ describe('pageHeader', () => {
   it('reads naturally for a single bubble', () => {
     expect(pageHeader(0, 1, 1)).toContain('1 image is a bubble');
     expect(pageHeader(0, 2, 1)).toContain('2 images are bubbles');
+  });
+});
+
+describe('routeGroups', () => {
+  it('puts a group on the page its ids name', () => {
+    const groups = routeGroups([3, 2], [{ ids: ['p2b1', 'p2b2'], src: 'あい', out: 'ก' }]);
+    expect(groups[0]).toEqual([]);
+    expect(groups[1]).toEqual([{ blocks: [0, 1], src: 'あい', out: 'ก' }]);
+  });
+
+  it('drops a group whose ids straddle two pages', () => {
+    // Pages in one request are unrelated books; a sentence cannot run between
+    // them, so the claim is discarded rather than trimmed to one page.
+    const groups = routeGroups([2, 2], [{ ids: ['p1b1', 'p2b1'], src: 'x', out: 'y' }]);
+    expect(groups).toEqual([[], []]);
+  });
+
+  it('drops a group naming a crop that was never sent', () => {
+    expect(routeGroups([2], [{ ids: ['p1b1', 'p1b5'] }])).toEqual([[]]);
+  });
+
+  it('drops a group with an unreadable id rather than using the rest', () => {
+    expect(routeGroups([3], [{ ids: ['p1b1', 'nonsense'] }])).toEqual([[]]);
+    expect(routeGroups([3], [{ ids: 'p1b1' }])).toEqual([[]]);
+    expect(routeGroups([3], [{}])).toEqual([[]]);
+  });
+
+  it('needs two distinct crops to be a group at all', () => {
+    expect(routeGroups([3], [{ ids: ['p1b1'] }])).toEqual([[]]);
+    expect(routeGroups([3], [{ ids: ['p1b2', 'p1b2'] }])).toEqual([[]]);
+    expect(routeGroups([3], [{ ids: [] }])).toEqual([[]]);
+  });
+
+  it('sorts members into reading order and tolerates missing text', () => {
+    expect(routeGroups([4], [{ ids: ['p1b3', 'p1b1', 'p1b2'] }])).toEqual([
+      [{ blocks: [0, 1, 2], src: '', out: '' }],
+    ]);
+  });
+
+  it('keeps several groups on one page', () => {
+    const groups = routeGroups(
+      [5],
+      [
+        { ids: ['p1b1', 'p1b2'], src: 'a', out: 'A' },
+        { ids: ['p1b4', 'p1b5'], src: 'b', out: 'B' },
+      ],
+    );
+    expect(groups[0]).toHaveLength(2);
+  });
+
+  it('returns one empty list per page when the model proposes nothing', () => {
+    expect(routeGroups([2, 3, 1], [])).toEqual([[], [], []]);
   });
 });

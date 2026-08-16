@@ -37,6 +37,7 @@ const els = {
   runSamples: $<HTMLButtonElement>('run-samples'),
   exportPng: $<HTMLButtonElement>('export-png'),
   boxesOnly: $<HTMLInputElement>('boxes-only'),
+  modelGrouping: $<HTMLInputElement>('model-grouping'),
   history: $<HTMLSelectElement>('history'),
   loadRun: $<HTMLButtonElement>('load-run'),
   exportRun: $<HTMLButtonElement>('export-run'),
@@ -59,7 +60,11 @@ function makeGemini(): GeminiVisionReader {
   }
   // Local only, never committed: this is the user's own key.
   localStorage.setItem('mt.geminiKey', apiKey);
-  return new GeminiVisionReader({ apiKey, sourceLang: els.lang.value as LangCode });
+  return new GeminiVisionReader({
+    apiKey,
+    sourceLang: els.lang.value as LangCode,
+    grouping: els.modelGrouping.checked,
+  });
 }
 
 async function getDetector(kind: string): Promise<TextDetector> {
@@ -102,7 +107,7 @@ async function getDetector(kind: string): Promise<TextDetector> {
 async function getRecognizer(kind: string): Promise<TextRecognizer> {
   const device = els.backend.value === 'wasm' ? 'wasm' : 'webgpu';
   // Language is part of the identity for Gemini — the prompt is built from it.
-  const key = `rec:${kind}:${device}:${els.lang.value}`;
+  const key = `rec:${kind}:${device}:${els.lang.value}:${els.modelGrouping.checked}`;
 
   const cached = engines.get(key) as TextRecognizer | undefined;
   if (cached) return cached;
@@ -212,7 +217,7 @@ async function processFiles(files: readonly File[]): Promise<void> {
         lang,
         preset,
         detector: els.detector.value,
-        recognizer: els.recognizer.value,
+        recognizer: `${els.recognizer.value}${els.modelGrouping.checked ? '+group' : ''}`,
         backend: els.backend.value,
         dilate: Number(els.dilate.value),
         nms: Number(els.nms.value),

@@ -7,4 +7,4 @@
  * them in `extension/src/core/` and are run from here too — see
  * vitest.config.ts.
  */
-export * from '../../../extension/src/core/geometry';
+export * from '../../../extension/src/core/batch';

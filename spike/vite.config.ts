@@ -83,6 +83,10 @@ export default defineConfig(({ mode }) => {
   return {
   plugins: [samplesPlugin()],
   server: {
+    // src/core/* re-export the extension's own core/, which lives outside this
+    // root. Without this the dev server refuses to serve them and the harness
+    // would be back to testing a copy.
+    fs: { allow: ['..'] },
     // onnxruntime-web multi-threading needs SharedArrayBuffer, which needs
     // cross-origin isolation. Whether the threaded path is worth it is one of
     // the things M0 measures, so keep it available.

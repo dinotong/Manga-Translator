@@ -1,3 +1,12 @@
+import {
+  cropId,
+  GROUP_INSTRUCTIONS,
+  type ReadGroup,
+  type ReadItem,
+  routeGroups,
+  routeItems,
+  type RoutedGroup,
+} from '../core/batch';
 import type { LangCode, TextBlock } from '../types';
 import type { TextRecognizer } from './types';
 
@@ -24,11 +33,18 @@ export interface GeminiOptions {
   sourceLang: LangCode;
   model?: string;
   targetLang?: string;
+  /**
+   * Ask the model which crops are one continuous text. On by default, and off is
+   * a first-class answer: what comes back is a *proposal*, vetoed on geometry in
+   * core/merge-proposals.ts, and the owner must be able to switch the whole idea
+   * off in one click if ordinary pages read worse.
+   */
+  grouping?: boolean;
   /** Previous page's bubbles, to keep dialogue coherent across a page turn. */
   context?: { src: string; out: string }[];
 }
 
-type ResolvedOptions = GeminiOptions & { model: string; targetLang: string };
+type ResolvedOptions = GeminiOptions & { model: string; targetLang: string; grouping: boolean };
 
 /**
  * `-latest` rather than a pinned version, on purpose.
@@ -42,6 +58,7 @@ type ResolvedOptions = GeminiOptions & { model: string; targetLang: string };
 export const GEMINI_DEFAULTS = {
   model: 'gemini-flash-lite-latest',
   targetLang: 'th',
+  grouping: true,
 } as const;
 
 /** Free tier: 1,000 requests/day. Batching a page into one call is what makes that plenty. */
@@ -60,6 +77,21 @@ const RESPONSE_SCHEMA = {
           out: { type: 'string' },
         },
         required: ['id', 'src', 'out'],
+      },
+    },
+    // Deliberately not in `required`: a page with nothing to group must be able
+    // to say so by omission, and a schema that demands the field invites the
+    // model to invent one.
+    groups: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          ids: { type: 'array', items: { type: 'string' } },
+          src: { type: 'string' },
+          out: { type: 'string' },
+        },
+        required: ['ids', 'src', 'out'],
       },
     },
   },
@@ -89,7 +121,12 @@ const LANG_NAMES: Record<string, string> = {
   th: 'Thai',
 };
 
-function buildPrompt(from: LangCode, to: string, context?: { src: string; out: string }[]): string {
+function buildPrompt(
+  from: LangCode,
+  to: string,
+  grouping: boolean,
+  context?: { src: string; out: string }[],
+): string {
   const src = LANG_NAMES[from] ?? from;
   const dst = LANG_NAMES[to] ?? to;
 
@@ -97,11 +134,12 @@ function buildPrompt(from: LangCode, to: string, context?: { src: string; out: s
     `You are a professional manga translator working ${src} -> ${dst}.`,
     `Each image is one speech bubble or caption cropped from a single manga page, in reading order.`,
     '',
-    'For every image, in order, return:',
-    `  id  - the 1-based index as a string`,
+    'For every image, return:',
+    `  id  - the id given for that image, e.g. "${cropId(0, 0)}"`,
     `  src - the ${src} text exactly as printed, no corrections`,
     `  out - a natural ${dst} translation`,
     '',
+    ...(grouping ? [...GROUP_INSTRUCTIONS, ''] : []),
     'Rules:',
     `- Translate the way ${dst} manga actually reads, not literally word for word.`,
     '- Never add information that is not in the source. Never invent dialogue.',
@@ -110,7 +148,7 @@ function buildPrompt(from: LangCode, to: string, context?: { src: string; out: s
     '- When unsure, stay close to the literal meaning.',
     `- Render sound effects as ${dst} sound effects.`,
     '- If an image has no readable text, return empty strings for src and out.',
-    '- Return exactly one item per image, in the same order.',
+    '- Return exactly one item per image, and always echo its id back verbatim.',
     context?.length
       ? `\nEarlier dialogue for continuity:\n${context.map((c) => `${c.src} -> ${c.out}`).join('\n')}`
       : '',
@@ -120,6 +158,12 @@ function buildPrompt(from: LangCode, to: string, context?: { src: string; out: s
 export interface GeminiResult {
   src: string;
   out: string;
+}
+
+/** One page's reading: an answer per crop, plus whatever the model wants merged. */
+export interface PageReading {
+  items: (GeminiResult | null)[];
+  groups: RoutedGroup[];
 }
 
 export class GeminiRefusedError extends Error {
@@ -157,31 +201,42 @@ export class GeminiVisionReader implements TextRecognizer {
 
   /** Single-crop path, so this satisfies TextRecognizer. Prefer readPage. */
   async recognize(crop: ImageBitmap, _block: TextBlock): Promise<string> {
-    const [only] = await this.readPage([crop]);
-    return only?.src ?? '';
+    const { items } = await this.readPage([crop]);
+    return items[0]?.src ?? '';
   }
 
   /**
    * One request for the whole page: read every crop and translate it.
-   * Returns one entry per input crop, padded if the model returns fewer.
+   *
+   * The reply is routed back by the id travelling with each image, never by
+   * position — same rule and same code as the extension (core/batch.ts), because
+   * putting one bubble's words in another bubble's box is the failure the reader
+   * cannot see.
    */
-  async readPage(crops: readonly ImageBitmap[], signal?: AbortSignal): Promise<GeminiResult[]> {
-    if (crops.length === 0) return [];
+  async readPage(crops: readonly ImageBitmap[], signal?: AbortSignal): Promise<PageReading> {
+    if (crops.length === 0) return { items: [], groups: [] };
 
-    const images = await Promise.all(crops.map(toInlineData));
-    const items = await this.call(
-      [
-        { text: buildPrompt(this.opts.sourceLang, this.opts.targetLang, this.opts.context) },
-        ...images,
-      ],
-      signal,
-    );
+    const parts: unknown[] = [
+      {
+        text: buildPrompt(
+          this.opts.sourceLang,
+          this.opts.targetLang,
+          this.opts.grouping,
+          this.opts.context,
+        ),
+      },
+    ];
+    for (const [i, crop] of crops.entries()) {
+      parts.push({ text: `id: ${cropId(0, i)}` });
+      parts.push(await toInlineData(crop));
+    }
 
-    // Pad rather than throw on a short reply: nine good bubbles beat none.
-    return crops.map((_, i) => ({
-      src: items[i]?.src ?? '',
-      out: items[i]?.out ?? '',
-    }));
+    const reply = await this.call(parts, signal);
+    const { perPage } = routeItems([crops.length], reply.items);
+    return {
+      items: perPage[0] ?? crops.map(() => null),
+      groups: this.opts.grouping ? (routeGroups([crops.length], reply.groups)[0] ?? []) : [],
+    };
   }
 
   /**
@@ -201,10 +256,12 @@ export class GeminiVisionReader implements TextRecognizer {
       items: live.map((x, n) => ({ id: String(n + 1), src: x.t })),
     });
 
-    const results = await this.call([
+    const reply = await this.call([
       {
         text: [
-          buildPrompt(this.opts.sourceLang, this.opts.targetLang, this.opts.context),
+          // No grouping here: this path is handed strings that were already
+          // read, so there is nothing left to regroup.
+          buildPrompt(this.opts.sourceLang, this.opts.targetLang, false, this.opts.context),
           '',
           'The text is given below as JSON instead of images. Echo each src back unchanged.',
           payload,
@@ -214,7 +271,8 @@ export class GeminiVisionReader implements TextRecognizer {
 
     const out = texts.map(() => ({ src: '', out: '' }));
     live.forEach((x, n) => {
-      out[x.i] = { src: x.t, out: results[n]?.out ?? '' };
+      const got = reply.items[n]?.out;
+      out[x.i] = { src: x.t, out: typeof got === 'string' ? got : '' };
     });
     return out;
   }
@@ -225,7 +283,7 @@ export class GeminiVisionReader implements TextRecognizer {
   private async call(
     parts: unknown[],
     signal?: AbortSignal,
-  ): Promise<GeminiResult[]> {
+  ): Promise<{ items: ReadItem[]; groups: ReadGroup[] }> {
     const res = await fetch(
       `${ENDPOINT}/${encodeURIComponent(this.opts.model)}:generateContent`,
       {
@@ -260,7 +318,8 @@ export class GeminiVisionReader implements TextRecognizer {
 
     try {
       const text = candidate?.content?.parts?.[0]?.text ?? '';
-      return (JSON.parse(text) as { items?: GeminiResult[] }).items ?? [];
+      const json = JSON.parse(text) as { items?: ReadItem[]; groups?: ReadGroup[] };
+      return { items: json.items ?? [], groups: json.groups ?? [] };
     } catch {
       throw new Error('Gemini returned unparsable JSON');
     }
