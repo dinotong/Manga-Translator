@@ -38,6 +38,23 @@
  * imhentai that costs nothing, because the guess in flight is almost always the
  * page the reader is turning to, but a reader who jumps somewhere unguessed can
  * wait one extra job. See D-027.
+ *
+ * ## Two ways to know what is coming, one set of rules
+ *
+ * Everything above is about *guessing* a later page's URL from the current one,
+ * which only works where the site numbers its files. But a site does not have to
+ * be guessable to be readable ahead: both long-strip readers the owner uses
+ * mount a window of upcoming pages and put the real image URLs into their own
+ * DOM before the reader gets there. Reading a URL the site has already published
+ * is strictly better than deriving one — there is nothing to be wrong about, no
+ * request goes to a URL that may not exist, and there is no per-site pattern to
+ * keep working.
+ *
+ * So there are two ways to name the next page worth fetching — `nextPublished`
+ * for sites that publish, `pickPrefetch` for sites that can be predicted — and
+ * they share everything else. Same gate (`prefetchAllowed`), same covered set,
+ * same one-at-a-time-per-batch, same silence while the tab is hidden. Neither is
+ * a second rate knob.
  */
 
 export const MIN_PREFETCH_GAP_MS = 500;
@@ -96,7 +113,15 @@ export function effectiveLookahead(configured: unknown, cachePages: number): num
   return Math.max(0, Math.min(asked, Math.floor(cachePages) - 1));
 }
 
-export interface PrefetchInput {
+/**
+ * Everything that decides *whether* a speculative request may start now.
+ *
+ * Deliberately says nothing about *which* page. Both ways of naming a page — a
+ * URL the site published, or one derived from the current page's — answer to
+ * exactly these rules, and splitting them out is what keeps that true rather
+ * than merely intended.
+ */
+export interface PrefetchGate {
   now: number;
   /** Auto translate is on and the extension is enabled. */
   enabled: boolean;
@@ -132,12 +157,27 @@ export interface PrefetchInput {
   consecutiveMisses: number;
   /** Timestamp the last speculative request started, or 0. */
   lastStartAt: number;
+}
+
+export interface PrefetchInput extends PrefetchGate {
   /** Page the reader is on, or null when the site does not expose one. */
   currentPage: number | null;
   /** Last page of the gallery, or null when unknown. */
   totalPages: number | null;
   /** Pages already fetched, in flight, or known to be cached. */
   covered: ReadonlySet<number>;
+}
+
+/** May *any* speculative request start right now? */
+export function prefetchAllowed(gate: PrefetchGate): boolean {
+  if (!gate.enabled) return false;
+  if (clampLookahead(gate.lookahead) === 0) return false;
+  if (!gate.visible) return false;
+  if (gate.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return false;
+  if (gate.foregroundWaiting) return false;
+  if (gate.inFlight >= Math.max(1, gate.batchSize ?? 1)) return false;
+  if (gate.now - gate.lastStartAt < MIN_PREFETCH_GAP_MS) return false;
+  return true;
 }
 
 /**
@@ -147,13 +187,7 @@ export interface PrefetchInput {
  * that started with n+3 would leave the very next turn uncovered.
  */
 export function pickPrefetch(input: PrefetchInput): number | null {
-  if (!input.enabled) return null;
-  if (clampLookahead(input.lookahead) === 0) return null;
-  if (!input.visible) return null;
-  if (input.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return null;
-  if (input.foregroundWaiting) return null;
-  if (input.inFlight >= Math.max(1, input.batchSize ?? 1)) return null;
-  if (input.now - input.lastStartAt < MIN_PREFETCH_GAP_MS) return null;
+  if (!prefetchAllowed(input)) return null;
   if (input.currentPage === null || !Number.isFinite(input.currentPage)) return null;
 
   const lookahead = clampLookahead(input.lookahead);
@@ -163,4 +197,78 @@ export function pickPrefetch(input: PrefetchInput): number | null {
     if (!input.covered.has(page)) return page;
   }
   return null;
+}
+
+/**
+ * A page whose real image URL the site has already put into its own DOM.
+ *
+ * Produced by a site profile, which is the only place that may know how a
+ * particular reader numbers and mounts its pages. Everything downstream treats
+ * these as plain facts.
+ */
+export interface PublishedPage {
+  /** Absolute page number in the gallery, one-based. */
+  page: number;
+  /** The URL the site itself published for that page. */
+  url: string;
+  /** Top edge of the element, in px relative to the top of the viewport. */
+  top: number;
+}
+
+export interface PublishedInput {
+  /** Everything the page currently publishes, in any order. */
+  pages: readonly PublishedPage[];
+  viewportHeight: number;
+  /** How many pages ahead the reader allows, as for `pickPrefetch`. */
+  lookahead: number;
+  /** Pages already fetched, in flight, or known to be cached. */
+  covered: ReadonlySet<number>;
+}
+
+/**
+ * The next published page worth fetching, or null.
+ *
+ * ## Why "ahead" is measured against the bottom of the viewport
+ *
+ * A page whose top edge is below the fold is one the reader has not reached, on
+ * any reader, without needing to know which page they are "on" — which is the
+ * one thing these sites are unreliable about. luscious does expose `?index=`,
+ * but measured on 2026-08-16 it named row 3 while row 4 was the one under the
+ * reader's eyes, so deriving "ahead" from it would be off by one page in the
+ * direction that matters. The element positions come from the same DOM read as
+ * the URLs, so they cannot disagree with each other.
+ *
+ * ## Why overlapping the IntersectionObserver is not a waste
+ *
+ * Some of what this returns is within the observer's two-screen reach and will
+ * be queued as real work shortly. That is not a duplicated request: the content
+ * script keys work in flight by URL, so the element's own job adopts the one
+ * already running rather than starting a second (`adopt` in
+ * entrypoints/content.ts). Fetching it early is simply earlier.
+ *
+ * The cases where it is *not* merely earlier are the ones this exists for: an
+ * element the site has given a real `src` but the browser has not decoded yet
+ * (luscious sets `loading="lazy"`, so the ordinary path sits in `pendingLoad`
+ * waiting for the site to get round to it), and pages mounted beyond two
+ * screens, which the observer has not looked at at all.
+ */
+export function nextPublished(input: PublishedInput): PublishedPage | null {
+  const lookahead = clampLookahead(input.lookahead);
+  if (lookahead === 0) return null;
+
+  const ahead = input.pages
+    .filter(
+      (p) =>
+        Number.isInteger(p.page) &&
+        p.page >= 1 &&
+        p.url !== '' &&
+        Number.isFinite(p.top) &&
+        p.top >= input.viewportHeight,
+    )
+    .sort((a, b) => a.page - b.page)
+    .slice(0, lookahead);
+
+  // Nearest first, for the same reason as `pickPrefetch`: the next turn is the
+  // one about to be needed.
+  return ahead.find((p) => !input.covered.has(p.page)) ?? null;
 }
