@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MEAN, STD, STRIDE, expandBox, planDetInput, rgbaToNchw } from './preprocess';
+import { MEAN, STD, STRIDE, expandBox, planDetInput, rgbaToNchw, shrinkBox } from './preprocess';
 
 describe('planDetInput', () => {
   it('produces sides that are multiples of the stride', () => {
@@ -98,5 +98,52 @@ describe('expandBox', () => {
     const a = expandBox({ x: 100, y: 0, w: 30, h: 300 }, 0.1, bounds);
     const b = expandBox({ x: 142, y: 0, w: 30, h: 300 }, 0.1, bounds);
     expect(a.x + a.w).toBeLessThan(b.x);
+  });
+});
+
+describe('shrinkBox', () => {
+  it('removes the dilation radius from every side', () => {
+    expect(shrinkBox({ x: 100, y: 100, w: 60, h: 300 }, 14)).toEqual({
+      x: 114,
+      y: 114,
+      w: 32,
+      h: 272,
+    });
+  });
+
+  it('restores a vertical column to its ink width', () => {
+    // The reported symptom: at a 960px model input a 1.5% radius is 14px, so a
+    // 30px column of vertical Japanese comes out of connected components at
+    // 58px — nearly double — and the overlay panel is sized from it.
+    const dilated = { x: 86, y: 86, w: 58, h: 428 };
+    expect(shrinkBox(dilated, 14)).toEqual({ x: 100, y: 100, w: 30, h: 400 });
+  });
+
+  it('is the inverse of dilating a box by the same radius', () => {
+    const ink = { x: 40, y: 80, w: 24, h: 200 };
+    const grown = { x: ink.x - 9, y: ink.y - 9, w: ink.w + 18, h: ink.h + 18 };
+    expect(shrinkBox(grown, 9)).toEqual(ink);
+  });
+
+  it('is a no-op at radius 0', () => {
+    const box = { x: 5, y: 6, w: 7, h: 8 };
+    expect(shrinkBox(box, 0)).toEqual(box);
+  });
+
+  it('collapses toward the centre instead of inverting', () => {
+    // A blob thinner than twice the radius must not come back with negative
+    // width — a rect the overlay cannot draw and grouping cannot reason about.
+    const out = shrinkBox({ x: 100, y: 100, w: 10, h: 400 }, 50);
+    expect(out.w).toBeGreaterThan(0);
+    expect(out.h).toBeGreaterThan(0);
+    expect(out.x).toBeGreaterThanOrEqual(100);
+    expect(out.x + out.w).toBeLessThanOrEqual(110);
+  });
+
+  it('keeps the box centred on what it shrank from', () => {
+    const before = { x: 100, y: 200, w: 80, h: 60 };
+    const after = shrinkBox(before, 10);
+    expect(after.x + after.w / 2).toBeCloseTo(before.x + before.w / 2, 6);
+    expect(after.y + after.h / 2).toBeCloseTo(before.y + before.h / 2, 6);
   });
 });

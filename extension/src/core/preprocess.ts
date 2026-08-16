@@ -78,6 +78,34 @@ export function rgbaToNchw(rgba: Readonly<Uint8ClampedArray>, size: Size): Float
  * Keep it small — over-expanding makes neighbouring bubbles touch, and merging
  * them is grouping's decision to make, not the detector's.
  */
+/**
+ * Undo the dilation that was applied to join glyphs into a line.
+ *
+ * Dilating the probability map grows every blob by the structuring element, so
+ * the bounding box that comes back out is the ink *plus* the radius on all four
+ * sides. Left uncorrected that is not a rounding error: at a 960px model input
+ * a 1.5% radius is 14px, which turns a 30px column of vertical Japanese into
+ * 58px and a 24px line of Latin into 52px — both more than doubled, and worst
+ * exactly where the text is thinnest.
+ *
+ * Dilation is how lines are found, not how they are measured. Shrinking by the
+ * same radius afterwards restores the extent of the ink itself, which is what
+ * the crop and the overlay panel should be sized from.
+ *
+ * Never inverts: a blob thinner than twice the radius collapses toward its
+ * centre line rather than to a negative size.
+ */
+export function shrinkBox(
+  box: { x: number; y: number; w: number; h: number },
+  radius: number,
+) {
+  if (radius <= 0) return { ...box };
+
+  const dx = Math.min(radius, Math.max(0, (box.w - 1) / 2));
+  const dy = Math.min(radius, Math.max(0, (box.h - 1) / 2));
+  return { x: box.x + dx, y: box.y + dy, w: box.w - dx * 2, h: box.h - dy * 2 };
+}
+
 export function expandBox(
   box: { x: number; y: number; w: number; h: number },
   ratio: number,

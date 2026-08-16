@@ -16,7 +16,7 @@ import {
   dilate,
 } from '../core/components';
 import { DIRECTION_DEFAULTS, detectDirection } from '../core/direction';
-import { expandBox, planDetInput, rgbaToNchw } from '../core/preprocess';
+import { expandBox, planDetInput, rgbaToNchw, shrinkBox } from '../core/preprocess';
 import type { LangCode, TextLine } from '../types';
 import { PipelineError } from '../shared/errors';
 import { makeLog } from '../shared/log';
@@ -219,13 +219,20 @@ export class PpOcrDetector {
     const mask = this.opts.dilateRatio > 0 ? dilate(probMap, input, radius, radius) : probMap;
 
     return connectedComponents(mask, input, this.opts.components).map((component) => {
+      // Shrink by the same radius that was dilated on, in model space and
+      // before scaling. The dilation exists to join glyphs into a line; leaving
+      // it in the geometry inflates every box by the structuring element, which
+      // at a 14px radius more than doubles a column of vertical Japanese or a
+      // line of Latin. See shrinkBox.
+      const tight = shrinkBox(component.rect, radius);
+
       // Model space -> source bitmap space. Per-axis, because stride rounding
       // makes the two scales slightly different.
       const scaled = {
-        x: component.rect.x * scaleBack.x,
-        y: component.rect.y * scaleBack.y,
-        w: component.rect.w * scaleBack.x,
-        h: component.rect.h * scaleBack.y,
+        x: tight.x * scaleBack.x,
+        y: tight.y * scaleBack.y,
+        w: tight.w * scaleBack.x,
+        h: tight.h * scaleBack.y,
       };
       const rect = expandBox(scaled, this.opts.expandRatio, source);
       return { rect, score: component.score, direction: detectDirection(rect, dirOpts) };
