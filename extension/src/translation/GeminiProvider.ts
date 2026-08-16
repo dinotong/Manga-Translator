@@ -77,6 +77,14 @@ function buildPrompt(cfg: GeminiConfig, pages = 1): string {
   const src = LANG_NAMES[cfg.from] ?? cfg.from;
   const dst = LANG_NAMES[cfg.to] ?? cfg.to;
 
+  // Two grammatical slots, and 'auto' does not fit both. LANG_NAMES.auto is a
+  // noun phrase — "the language printed in the image" — which reads correctly
+  // after "working", and as "the the language printed in the image text" in the
+  // field description below. Naming a concrete language there would be worse
+  // than clumsy: on 'auto' we do not know it, and asserting one invites the
+  // model to correct what it sees into what it was told to expect.
+  const srcField = cfg.from === 'auto' ? 'source' : src;
+
   return [
     `You are a professional manga translator working ${src} -> ${dst}.`,
     pages > 1
@@ -92,7 +100,7 @@ function buildPrompt(cfg: GeminiConfig, pages = 1): string {
     pages > 1
       ? '  id  - exactly the id given for that image on its PAGE line, e.g. "p2b3"'
       : `  id  - the id given for that image, e.g. "${cropId(0, 0)}"`,
-    `  src - the ${src} text exactly as printed, no corrections`,
+    `  src - the ${srcField} text exactly as printed, no corrections`,
     `  out - a natural ${dst} translation`,
     '',
     'Rules:',
