@@ -3,7 +3,7 @@ import type { OverlayBlock } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
-import { panelRect } from '../../core/panel-shape';
+import { panelRect, plateAlphaOver, plateInPanel } from '../../core/panel-shape';
 
 /**
  * The overlay layer.
@@ -123,14 +123,14 @@ export class Overlay {
    * Adopt new settings and redraw what is already on screen.
    *
    * Redrawn, never cleared: everything here is presentation — font size, how
-   * opaque a box is — and a re-translate would spend a request from a 1,000/day
-   * budget to arrive at the same words.
+   * opaque each layer is — and a re-translate would spend a request from a
+   * 1,000/day budget to arrive at the same words.
    *
    * The snapshot is not tidiness. `attach` deletes the entry and puts it back,
    * and a Map re-insertion lands *behind* a live iterator, which then reaches it
-   * again and repeats — forever. Measured on a translated page: every settings
-   * write hung the tab's main thread on the spot, with no way back but closing
-   * it, which is why changing one slider appeared to break every open reader.
+   * again and repeats — forever. That was a hang of the page's main thread on
+   * every settings change, with no way out but closing the tab, and it is the
+   * reason changing a setting appeared to break every open reader.
    */
   updateSettings(settings: Settings): void {
     this.settings = settings;
@@ -152,11 +152,14 @@ export class Overlay {
     if (!result) return false;
 
     this.detach(target);
+    const aspect = result.natural.w > 0 ? result.natural.h / result.natural.w : 1;
+    const panels = result.blocks.map((b) => panelRect(b.rect, b.direction, aspect));
+
     const layer = document.createElement('div');
     layer.className = 'mt-layer';
     layer.dataset.hash = hash;
     layer.innerHTML = result.blocks
-      .map((b) => this.renderBox(b, result.natural))
+      .map((b, i) => this.renderBox(b, panels[i] ?? b.rect, aspect))
       .join('');
 
     this.root.append(layer);
@@ -165,7 +168,12 @@ export class Overlay {
       layer,
       target,
       boxes: Array.from(layer.children) as HTMLElement[],
-      rects: result.blocks.map((b) => b.rect),
+      // The panel, not the detected block: this is what hover hit-tests against,
+      // and the reader can only aim at what they can see. A widened panel whose
+      // hover region was still the narrow column meant pointing at the part of
+      // the box that covers the art — the part they want out of the way — did
+      // nothing.
+      rects: panels,
       placement: null,
     });
     this.track(target);
@@ -348,7 +356,13 @@ export class Overlay {
   }
 
   /**
-   * One box.
+   * One bubble: the text panel, with the cover plate nested inside it.
+   *
+   * Nested rather than side by side so that one bubble stays one element as far
+   * as everything else is concerned — hover, peeking, hit-testing and the
+   * `boxes`/`rects` pairing all address the panel and the plate follows it. The
+   * plate is positioned in the panel's own frame, which is what `plateInPanel`
+   * converts to.
    *
    * Font size is computed here rather than by CSS because it depends on how much
    * text has to fit. Two unit traps live in this calculation: rect is normalized
@@ -357,16 +371,10 @@ export class Overlay {
    * through the image's aspect ratio or every tall vertical bubble is judged far
    * shorter than it is and its text comes out tiny.
    */
-  private renderBox(b: OverlayBlock, natural: Size): string {
+  private renderBox(b: OverlayBlock, panel: NormRect, aspect: number): string {
     const pct = (v: number) => (v * 100).toFixed(3);
-    const aspect = natural.w > 0 ? natural.h / natural.w : 1;
-
-    // Vertical source text gets a wider panel than it was found in: Thai is
-    // horizontal, and inside a column a few percent of the page wide it wraps
-    // after every character. See core/panel-shape.ts.
-    const rect = panelRect(b.rect, b.direction, aspect);
-    const wCqw = rect.w * 100;
-    const hCqw = rect.h * 100 * aspect;
+    const wCqw = panel.w * 100;
+    const hCqw = panel.h * 100 * aspect;
 
     // A box holds about w*h / (1.2*s^2) roughly-square glyphs at size s with 1.2
     // line spacing. Solve for s at N characters.
@@ -378,16 +386,43 @@ export class Overlay {
 
     const hover = this.settings.display.mode === 'target-plus-source-on-hover' && b.source;
     const style =
-      `left:${pct(rect.x)}%;top:${pct(rect.y)}%;` +
-      `width:${pct(rect.w)}%;height:${pct(rect.h)}%;` +
+      `left:${pct(panel.x)}%;top:${pct(panel.y)}%;` +
+      `width:${pct(panel.w)}%;height:${pct(panel.h)}%;` +
       `font-size:${fs.toFixed(2)}cqw;` +
-      `--mt-box-opacity:${this.settings.display.boxOpacity}`;
+      `--mt-panel-opacity:${this.settings.display.panelOpacity}`;
 
     return (
       `<div class="mt-box${b.refused ? ' refused' : ''}" style="${style}"${hover ? ' data-hover="1"' : ''}>` +
+      this.renderPlate(b, panel) +
       `<span class="mt-text">${escapeHtml(b.text)}</span>` +
       (hover ? `<span class="mt-src">${escapeHtml(b.source)}</span>` : '') +
       '</div>'
+    );
+  }
+
+  /**
+   * The cover plate, or nothing.
+   *
+   * Nothing in two cases. A refused block has no translation to put in the
+   * source's place, so hiding it would cost the reader the only text there is —
+   * the dashed marker sits over the Japanese and lets it show. And a plate that
+   * would add no opacity over the panel is not drawn at all, which is what stops
+   * the coincident case (horizontal text, panel not widened) from stacking two
+   * elements and coming out darker than either setting asked for.
+   */
+  private renderPlate(b: OverlayBlock, panel: NormRect): string {
+    if (b.refused) return '';
+    const alpha = plateAlphaOver(
+      this.settings.display.plateOpacity,
+      this.settings.display.panelOpacity,
+    );
+    if (alpha <= 0) return '';
+
+    const pct = (v: number) => (v * 100).toFixed(3);
+    const p = plateInPanel(b.rect, panel);
+    return (
+      `<i class="mt-plate" style="left:${pct(p.x)}%;top:${pct(p.y)}%;` +
+      `width:${pct(p.w)}%;height:${pct(p.h)}%;--mt-plate-alpha:${alpha.toFixed(4)}"></i>`
     );
   }
 }

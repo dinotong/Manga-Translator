@@ -5,6 +5,7 @@ import {
   DEFAULT_CACHE_PAGES,
   normalizeCacheLimits,
 } from '../core/cache-budget';
+import { clampOpacity } from '../core/panel-shape';
 import { clampLookahead } from '../core/prefetch';
 import { clampInFlight, DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
 import type { ApiKeyEntry } from '../core/quota';
@@ -32,8 +33,12 @@ export interface Settings {
    * 3 -> 4: `cache` appeared. Nothing to carry: the budget it replaces was a
    *         constant in cache/stores.ts, never a stored value, so every
    *         existing record simply gains the defaults.
+   * 4 -> 5: `display.boxOpacity` (one value for one element) became
+   *         `plateOpacity` and `panelOpacity`, because the element was doing two
+   *         jobs that want opposite settings. Both inherit the old value, so the
+   *         upgrade changes nothing on screen until the reader moves a slider.
    */
-  version: 4;
+  version: 5;
 
   /**
    * The master kill switch, and the only thing here that is still global.
@@ -102,7 +107,25 @@ export interface Settings {
   display: {
     mode: 'target-only' | 'target-plus-source-on-hover';
     fontScale: number;
-    boxOpacity: number;
+    /**
+     * The cover plate: the *detected* rectangle, hugging the original ink.
+     *
+     * Its only job is hiding the source text, so it wants to be small and
+     * opaque. Kept separate from the panel below because the panel is widened
+     * for horizontal Thai (core/panel-shape.ts) and widening the plate with it
+     * meant a readable line of Thai was paid for with a white slab across the
+     * artwork.
+     */
+    plateOpacity: number;
+    /**
+     * The text panel: the widened rectangle the Thai is set in.
+     *
+     * Wants to be as faint as it can be and still read, so the picture shows
+     * through behind the words. Where the two rects coincide — horizontal
+     * source text, which is not widened at all — the stack is painted at
+     * whichever of the two is stronger rather than both, see `plateAlphaOver`.
+     */
+    panelOpacity: number;
     /**
      * Hovering a translation panel fades it so the artwork underneath shows.
      *
@@ -155,7 +178,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 4,
+  version: 5,
   enabled: true,
   autoSites: [],
   lang: { source: 'ja', target: 'th' },
@@ -185,7 +208,14 @@ export const DEFAULT_SETTINGS: Settings = {
     // just as hidden. Anyone who wants the Japanese can still turn it on.
     mode: 'target-only',
     fontScale: 1,
-    boxOpacity: 0.92,
+    // Fully opaque, because hiding the original is the whole of this layer's
+    // job and 0.92 leaves the Japanese faintly legible under the Thai.
+    plateOpacity: 1,
+    // Not opaque, because this layer is mostly artwork: on vertical text it is
+    // several times the width of the ink it replaced. A fresh install therefore
+    // shows the art around the words straight away, rather than hiding it and
+    // waiting for the reader to discover a slider.
+    panelOpacity: 0.8,
     peekOnHover: true,
   },
   performance: {
@@ -252,6 +282,35 @@ function migrateAutoSites(version: unknown, stored: unknown, legacyOn: unknown):
   return legacyOn === true ? normalizeSiteList(PROFILE_HOSTS) : [];
 }
 
+/**
+ * v4 -> v5: one `boxOpacity` becomes a plate opacity and a panel opacity.
+ *
+ * Both inherit the old number. That is deliberately a visual no-op: over the
+ * plate the two layers composite to `max(plate, panel)` (see `plateAlphaOver`),
+ * which is the old value, and outside it the panel alone is the old value too.
+ * So the reader's page looks exactly as it did after the upgrade, and the new
+ * behaviour only appears once they move one of the two sliders — which is the
+ * only honest way to introduce a setting nobody has an opinion about yet.
+ *
+ * Gated on the stored version, like the two migrations above and for the same
+ * reason: once the record says 5, whatever is in the two fields is a decision.
+ */
+function migrateDisplay(
+  version: unknown,
+  stored: (Partial<Settings['display']> & { boxOpacity?: unknown }) | undefined,
+): Pick<Settings['display'], 'plateOpacity' | 'panelOpacity'> {
+  const d = DEFAULT_SETTINGS.display;
+  if (Number(version) >= 5) {
+    return {
+      plateOpacity: clampOpacity(stored?.plateOpacity ?? d.plateOpacity),
+      panelOpacity: clampOpacity(stored?.panelOpacity ?? d.panelOpacity),
+    };
+  }
+  const legacy = typeof stored?.boxOpacity === 'number' ? clampOpacity(stored.boxOpacity) : null;
+  if (legacy === null) return { plateOpacity: d.plateOpacity, panelOpacity: d.panelOpacity };
+  return { plateOpacity: legacy, panelOpacity: legacy };
+}
+
 function isKeyEntry(v: unknown): v is ApiKeyEntry {
   const e = v as ApiKeyEntry | null;
   return (
@@ -269,10 +328,11 @@ export function hydrate(stored: unknown): Settings {
   const s = (stored ?? {}) as Partial<Settings> & { autoTranslate?: unknown };
   const d = DEFAULT_SETTINGS;
   const gemini = s.translation?.gemini as (Partial<Settings['translation']['gemini']> & LegacyGemini) | undefined;
-  const next: Settings & { autoTranslate?: unknown } = {
+  const display = s.display as (Partial<Settings['display']> & { boxOpacity?: unknown }) | undefined;
+  const next: Settings & { autoTranslate?: unknown; display: Settings['display'] & { boxOpacity?: unknown } } = {
     ...d,
     ...s,
-    version: 4,
+    version: 5,
     // Normalised on read, not only on write: this list decides which sites are
     // allowed to spend the reader's daily quota, so a hand-edited storage entry
     // must not be able to add a site under a spelling the popup cannot show.
@@ -292,7 +352,10 @@ export function hydrate(stored: unknown): Settings {
       ollama: { ...d.translation.ollama, ...s.translation?.ollama },
     },
     ocr: { ...d.ocr, ...s.ocr },
-    display: { ...d.display, ...s.display },
+    // Clamped on read like the lists and budgets above: an alpha outside [0,1]
+    // is not a setting, and a record that has gone wrong must fail towards
+    // hiding the original rather than towards showing untranslated Japanese.
+    display: { ...d.display, ...s.display, ...migrateDisplay(s.version, display) },
     performance: {
       ...d.performance,
       ...s.performance,
@@ -313,10 +376,13 @@ export function hydrate(stored: unknown): Settings {
     cache: normalizeCacheLimits(s.cache),
     perSet: { ...d.perSet, ...s.perSet },
   };
-  // The `...s` spread above copies the v2 field through. Deleting it means the
-  // next write drops it from storage instead of leaving a stale global that
-  // looks authoritative to anyone reading the record later.
+  // The `...s` spreads above copy the dead v2 and v4 fields through. Deleting
+  // them means the next write drops them from storage instead of leaving stale
+  // values that look authoritative to anyone reading the record later — and, in
+  // `boxOpacity`'s case, would silently re-run the migration over the reader's
+  // new choices if the version were ever rolled back.
   delete next.autoTranslate;
+  delete next.display.boxOpacity;
   return next;
 }
 

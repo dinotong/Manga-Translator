@@ -18,7 +18,7 @@ describe('hydrate — v1 to v2 key migration', () => {
       version: 1,
       translation: { gemini: { apiKey: 'AIza-real-key', model: 'gemini-flash-lite-latest' } },
     });
-    expect(s.version).toBe(4);
+    expect(s.version).toBe(5);
     expect(s.translation.gemini.keys).toHaveLength(1);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-real-key');
     expect(s.translation.gemini.model).toBe('gemini-flash-lite-latest');
@@ -86,13 +86,14 @@ describe('hydrate — v1 to v2 key migration', () => {
     expect(s.lang.source).toBe('en');
     expect(s.ocr.dilateRatio).toBe(0.02);
     expect(s.display.fontScale).toBe(1.2);
-    expect(s.display.boxOpacity).toBe(DEFAULT_SETTINGS.display.boxOpacity);
+    expect(s.display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
+    expect(s.display.panelOpacity).toBe(DEFAULT_SETTINGS.display.panelOpacity);
     expect(s.translation.gemini.safetyOff).toBe(false);
   });
 
   it('handles storage that is empty or garbage', () => {
     expect(hydrate(undefined).translation.gemini.keys).toEqual([]);
-    expect(hydrate(null).version).toBe(4);
+    expect(hydrate(null).version).toBe(5);
     expect(hydrate({ translation: { gemini: { keys: 'nope' } } }).translation.gemini.keys).toEqual([]);
   });
 });
@@ -106,7 +107,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => {
   it('keeps the sites auto-translate was aimed at, for someone who had it on', () => {
     const s = hydrate({ version: 2, autoTranslate: true });
-    expect(s.version).toBe(4);
+    expect(s.version).toBe(5);
     expect(s.autoSites).toEqual([...PROFILE_HOSTS]);
     expect(s.autoSites).toContain('imhentai.xxx');
     expect(s.autoSites).toContain('mangadex.org');
@@ -161,7 +162,7 @@ describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => 
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(4);
+    expect(s.version).toBe(5);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('imhentai.xxx');
   });
@@ -187,7 +188,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       translation: { gemini: { keys: [{ id: 'a', label: 'หลัก', key: 'AIza-real' }] } },
       perSet: { 'imhentai.xxx/1474885': { source: 'ja' } },
     });
-    expect(s.version).toBe(4);
+    expect(s.version).toBe(5);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['imhentai.xxx', 'mangadex.org']);
     expect(s.perSet['imhentai.xxx/1474885']).toEqual({ source: 'ja' });
@@ -225,9 +226,80 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(4);
+    expect(s.version).toBe(5);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('mangadex.org');
     expect(s.cache.maxPages).toBe(DEFAULT_CACHE_PAGES);
+  });
+});
+
+/**
+ * v4 -> v5 splits one opacity into two. The owner is running this build with
+ * real keys, real per-site switches and a boxOpacity they chose, so what is
+ * checked here is that the upgrade costs them none of it and does not silently
+ * restyle the page they are reading.
+ */
+describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', () => {
+  it('gives both layers the value the reader already chose', () => {
+    // Deliberately a visual no-op: over the plate the two composite to
+    // max(plate, panel) and outside it the panel alone is that same number, so
+    // the page looks exactly as it did until a slider moves.
+    const s = hydrate({ version: 4, display: { boxOpacity: 0.6 } });
+    expect(s.display.plateOpacity).toBe(0.6);
+    expect(s.display.panelOpacity).toBe(0.6);
+  });
+
+  it('carries the owner’s keys, sites and cache across the bump', () => {
+    const s = hydrate({
+      version: 4,
+      autoSites: ['e-hentai.org', 'nhentai.net'],
+      translation: { gemini: { keys: [{ id: 'a', label: 'หลัก', key: 'AIza-real' }] } },
+      cache: { maxPages: 60, maxBytes: 100 * 1024 * 1024 },
+      display: { boxOpacity: 0.92, fontScale: 1.1, peekOnHover: false },
+      perSet: { 'e-hentai.org/4118730': { source: 'ja' } },
+    });
+    expect(s.version).toBe(5);
+    expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
+    expect(s.autoSites).toEqual(['e-hentai.org', 'nhentai.net']);
+    expect(s.cache).toEqual({ maxPages: 60, maxBytes: 100 * 1024 * 1024 });
+    expect(s.display.fontScale).toBe(1.1);
+    expect(s.display.peekOnHover).toBe(false);
+    expect(s.perSet['e-hentai.org/4118730']).toEqual({ source: 'ja' });
+  });
+
+  it('drops the dead field so it cannot overwrite the new ones later', () => {
+    const s = hydrate({ version: 4, display: { boxOpacity: 0.6 } });
+    expect((s.display as unknown as Record<string, unknown>).boxOpacity).toBeUndefined();
+  });
+
+  it('gives the defaults to a record that never had the old field', () => {
+    expect(hydrate({ version: 4 }).display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
+    expect(hydrate({ version: 4 }).display.panelOpacity).toBe(DEFAULT_SETTINGS.display.panelOpacity);
+  });
+
+  it('does not undo the reader’s choice once they have made one', () => {
+    // Storage may still hold the v4 number. Once the version says 5, the two
+    // fields are decisions, and re-deriving them from the old one would make
+    // "plate solid, panel faint" impossible to keep.
+    const s = hydrate({
+      version: 5,
+      display: { boxOpacity: 0.92, plateOpacity: 1, panelOpacity: 0.15 },
+    });
+    expect(s.display.plateOpacity).toBe(1);
+    expect(s.display.panelOpacity).toBe(0.15);
+  });
+
+  it('refuses an alpha outside [0,1] from a hand-edited record', () => {
+    const s = hydrate({ version: 5, display: { plateOpacity: 4, panelOpacity: -2 } });
+    expect(s.display.plateOpacity).toBe(1);
+    expect(s.display.panelOpacity).toBe(0);
+    expect(hydrate({ version: 5, display: { plateOpacity: 'solid' } }).display.plateOpacity).toBe(1);
+  });
+
+  it('takes a v1 all the way to v5', () => {
+    const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
+    expect(s.version).toBe(5);
+    expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
+    expect(s.display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
   });
 });

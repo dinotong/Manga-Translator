@@ -174,6 +174,53 @@ function Popup() {
         </select>
       </section>
 
+      {/*
+        The three dials that get touched while reading, rather than once at
+        install time. They are here and not only in options because tuning them
+        means looking at the page: every move applies to the tab behind this
+        popup immediately, redrawing the overlays already on it without
+        re-translating anything.
+      */}
+      <section>
+        <label>ขนาดตัวอักษร ({settings.display.fontScale.toFixed(2)}×)</label>
+        <input
+          type="range" min="0.7" max="1.5" step="0.05"
+          value={String(settings.display.fontScale)}
+          onInput={(e) =>
+            void patch({
+              display: { ...settings.display, fontScale: Number((e.target as HTMLInputElement).value) },
+            })
+          }
+        />
+
+        <label>แผ่นปิดต้นฉบับ ({Math.round(settings.display.plateOpacity * 100)}%)</label>
+        <input
+          type="range" min="0.3" max="1" step="0.02"
+          value={String(settings.display.plateOpacity)}
+          onInput={(e) =>
+            void patch({
+              display: { ...settings.display, plateOpacity: Number((e.target as HTMLInputElement).value) },
+            })
+          }
+        />
+
+        <label>พื้นหลังคำแปล ({Math.round(settings.display.panelOpacity * 100)}%)</label>
+        <input
+          type="range" min="0" max="1" step="0.02"
+          value={String(settings.display.panelOpacity)}
+          onInput={(e) =>
+            void patch({
+              display: { ...settings.display, panelOpacity: Number((e.target as HTMLInputElement).value) },
+            })
+          }
+        />
+        <p class="hint">
+          แผ่นปิดกลบตัวหนังสือเดิม · พื้นหลังคำแปลคือกล่องที่กว้างกว่าซึ่งบัง<b>ลายเส้น</b> —
+          ตั้งแผ่นปิดสูงและพื้นหลังต่ำ จะเห็นภาพทะลุหลังคำแปลโดยต้นฉบับยังถูกกลบ ·
+          ปรับแล้วเห็นผลกับหน้าที่แปลไว้แล้วทันที ไม่เสียโควตาเพิ่ม
+        </p>
+      </section>
+
       <div class="row">
         <button class="primary" disabled={busy || !hasKey} onClick={() => void translateNow()}>
           {busy ? 'กำลังสั่ง…' : 'แปลหน้านี้เดี๋ยวนี้'}

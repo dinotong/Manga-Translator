@@ -1,22 +1,32 @@
 import type { Direction, NormRect } from '../types';
 
 /**
- * The rectangle a translation panel should occupy, which is not always the
- * rectangle the text was found in.
+ * The two rectangles a translated bubble needs, and how opaque each may be.
  *
- * Japanese is set in tall narrow columns. Thai is horizontal and has no spaces
- * between words, so `overflow-wrap: anywhere` is the only thing keeping it
- * inside its box — and inside a column three percent of the page wide, "anywhere"
- * means after every single character. The reader gets one glyph per line running
- * down the page: the layout of the source language, in the target language's
- * script, which is precisely the outcome the project set out to avoid.
+ * There are two jobs here and they want opposite things.
  *
- * So a panel over vertical text is widened until horizontal text fits in it.
- * Height is left alone rather than reduced with the area, because the panel is
- * also what hides the original: trading a readable line for a column of Japanese
- * peeking out above and below it is not a trade worth making. The panel does
- * cover more art as a result — which is what hover-to-peek is for, and why it
- * defaults to on.
+ * **Hiding the original** wants the smallest rectangle that covers the ink, and
+ * wants it opaque. Anything wider is artwork destroyed for nothing.
+ *
+ * **Carrying the Thai** wants a rectangle wide enough to set a horizontal line
+ * in, and would rather be nearly transparent so the picture still reads through
+ * the words. Japanese is set in tall narrow columns; Thai is horizontal and has
+ * no spaces between words, so `overflow-wrap: anywhere` is the only thing
+ * keeping it inside its box — and inside a column three percent of the page
+ * wide, "anywhere" means after every single character. The reader gets one glyph
+ * per line running down the page: the layout of the source language, in the
+ * target language's script, which is precisely the outcome the project set out
+ * to avoid.
+ *
+ * One element cannot serve both. Widening it so the Thai reads also widens the
+ * opaque plate, and a large part of the page disappears under white. So the two
+ * are separated: `panelRect` gives the panel the text is set in, the detected
+ * rect stays as the cover plate, and `plateAlphaOver` says how to paint the
+ * plate given that it sits on top of the panel.
+ *
+ * Height is left alone when widening rather than reduced to keep the area,
+ * because a shorter panel would let the column of Japanese peek out above and
+ * below the plate under it.
  */
 
 /**
@@ -75,4 +85,56 @@ export function panelRect(rect: NormRect, direction: Direction, aspect: number):
   const x = Math.min(Math.max(0, centre - width / 2), Math.max(0, 1 - width));
 
   return { x, y: rect.y, w: width, h: rect.h };
+}
+
+/** Nothing outside [0,1] is a meaningful alpha; a broken value reads as opaque. */
+export function clampOpacity(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * How opaque to actually paint the cover plate, given it is drawn **on top of**
+ * the text panel.
+ *
+ * The plate always lies inside the panel — `panelRect` only ever grows the box
+ * outwards from the same centre — so wherever the plate is, two translucent
+ * layers stack. Painting both at the values the reader chose would composite to
+ * `1-(1-plate)(1-panel)`, which is darker than either of them asked for, and
+ * worst exactly where the two rects coincide: horizontal text, where the panel
+ * is not widened at all and the reader would get a double-strength plate for
+ * settings that say nothing of the sort.
+ *
+ * So the plate is painted at whatever alpha makes the stack come out at
+ * `max(plate, panel)`: the plate's own value where it is the stronger of the
+ * two, the panel's where it is not, and never more than one of them anywhere.
+ * A plate that would add nothing returns 0 and is not drawn at all, which is
+ * also how the coincident case avoids putting a second element on the page.
+ */
+export function plateAlphaOver(plateOpacity: number, panelOpacity: number): number {
+  const plate = clampOpacity(plateOpacity);
+  const panel = clampOpacity(panelOpacity);
+  if (plate <= panel) return 0;
+  // An opaque panel already hides everything; nothing can be added on top of it.
+  if (panel >= 1) return 0;
+  return (plate - panel) / (1 - panel);
+}
+
+/**
+ * The cover plate expressed in the panel's own coordinate frame, because that is
+ * where it is drawn: as a child of the panel element, so hover, peeking and
+ * hit-testing all keep treating one bubble as one thing.
+ *
+ * Both inputs are normalized against the image; the result is normalized against
+ * the panel, ready to become CSS percentages.
+ */
+export function plateInPanel(rect: NormRect, panel: NormRect): NormRect {
+  if (panel.w <= 0 || panel.h <= 0) return { x: 0, y: 0, w: 1, h: 1 };
+  return {
+    x: (rect.x - panel.x) / panel.w,
+    y: (rect.y - panel.y) / panel.h,
+    w: rect.w / panel.w,
+    h: rect.h / panel.h,
+  };
 }

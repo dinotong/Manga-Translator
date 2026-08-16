@@ -441,14 +441,36 @@ function Options() {
           }
         />
 
-        <label>ความทึบของกล่อง ({Math.round(s.display.boxOpacity * 100)}%)</label>
+        <label>ความทึบของแผ่นปิดต้นฉบับ ({Math.round(s.display.plateOpacity * 100)}%)</label>
         <input
           type="range" min="0.3" max="1" step="0.02"
-          value={String(s.display.boxOpacity)}
+          value={String(s.display.plateOpacity)}
           onInput={(e) =>
-            void patch({ display: { ...s.display, boxOpacity: Number((e.target as HTMLInputElement).value) } })
+            void patch({ display: { ...s.display, plateOpacity: Number((e.target as HTMLInputElement).value) } })
           }
         />
+        <p class="hint">
+          แผ่นนี้ทับ<b>เฉพาะกรอบที่ตรวจเจอตัวหนังสือ</b> — หน้าที่เดียวคือกลบต้นฉบับ
+          ลดลงเมื่ออยากเห็นตัวอักษรญี่ปุ่นข้างใต้ · 100% = กลบมิด
+        </p>
+
+        <label>ความทึบของพื้นหลังคำแปล ({Math.round(s.display.panelOpacity * 100)}%)</label>
+        <input
+          type="range" min="0" max="1" step="0.02"
+          value={String(s.display.panelOpacity)}
+          onInput={(e) =>
+            void patch({ display: { ...s.display, panelOpacity: Number((e.target as HTMLInputElement).value) } })
+          }
+        />
+        <p class="hint">
+          กล่องคำแปล<b>กว้างกว่า</b>ตัวหนังสือเดิมเสมอเมื่อต้นฉบับเป็นแนวตั้ง (ไทยเขียนแนวนอน
+          ถ้าใช้ความกว้างเท่าเดิมจะได้ตัวละบรรทัด) — ส่วนที่กว้างเกินมาคือ<b>ลายเส้น</b>
+          ตั้งค่านี้ต่ำๆ แล้วจะเห็นภาพทะลุหลังตัวหนังสือ โดยต้นฉบับยังถูกแผ่นด้านบนกลบอยู่
+        </p>
+        <p class="hint">
+          ต้นฉบับที่เป็น<b>แนวนอน</b>อยู่แล้วไม่ถูกขยาย สองค่านี้จึงทับกันพอดี —
+          กรณีนั้นจะวาดชั้นเดียวด้วยค่าที่<b>ทึบกว่า</b> ไม่ใช่สองชั้นซ้อนกัน
+        </p>
       </section>
 
       <section>

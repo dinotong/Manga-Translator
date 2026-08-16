@@ -30,6 +30,7 @@ export const OVERLAY_CSS = `
   contain: layout style;
 }
 
+/* The text panel: as wide as the Thai needs, as faint as the reader wants. */
 .mt-box {
   position: absolute;
   display: flex;
@@ -39,7 +40,7 @@ export const OVERLAY_CSS = `
   padding: 0.2em 0.3em;
   overflow: hidden;
   border-radius: 0.35em;
-  background: rgba(255, 255, 255, var(--mt-box-opacity, 0.92));
+  background: rgba(255, 255, 255, var(--mt-panel-opacity, 0.8));
   color: #111;
   font-family: "Sarabun", "Noto Sans Thai", "Leelawadee UI", system-ui, sans-serif;
   line-height: 1.18;
@@ -62,7 +63,24 @@ export const OVERLAY_CSS = `
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-.mt-text { transition: opacity 140ms ease; }
+/* The cover plate: only as big as the ink it hides, and drawn inside the panel.
+   Its alpha is not the reader's plate setting directly — it is what that setting
+   works out to once the panel underneath is taken into account, so the two never
+   composite darker than the stronger of them. See core/panel-shape.ts. */
+.mt-plate {
+  position: absolute;
+  border-radius: 0.25em;
+  background: rgba(255, 255, 255, var(--mt-plate-alpha, 1));
+  pointer-events: none;
+  transition: background-color 140ms ease;
+}
+
+.mt-text {
+  /* Above the plate, which is a sibling earlier in the box. */
+  position: relative;
+  z-index: 1;
+  transition: opacity 140ms ease;
+}
 
 .mt-box.refused {
   background: rgba(255, 236, 214, 0.95);
@@ -87,6 +105,9 @@ export const OVERLAY_CSS = `
   background-color: transparent;
   border-color: transparent;
 }
+/* Both layers, or peeking would uncover the art around the bubble and leave a
+   solid plate sitting on the part the reader is actually pointing at. */
+.mt-box.peek .mt-plate { background-color: transparent; }
 .mt-box.peek .mt-text { opacity: 0; }
 .mt-box.refused.peek {
   background-color: transparent;
@@ -98,6 +119,7 @@ export const OVERLAY_CSS = `
   display: none;
   position: absolute;
   inset: 0;
+  z-index: 2;
   align-items: center;
   justify-content: center;
   padding: 0.2em 0.3em;
