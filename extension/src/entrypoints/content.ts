@@ -438,6 +438,10 @@ export default defineContentScript({
     }
 
     function cancel(job: Job): void {
+      // Counted before the state is thrown away. `page` is set only on work the
+      // prefetcher started, and survives `adopt`, so this counts exactly the
+      // speculative pages that were paid for and then abandoned.
+      if (job.page !== null) prefetchStats.killed++;
       send({ t: 'CANCEL', jobId: job.id });
       settle(job);
     }
@@ -493,7 +497,23 @@ export default defineContentScript({
     const prefetchFailures = new Map<string, number>();
     /** Pages whose translation we already hold, for `readAheadLead`. */
     const prefetchReady = new Set<number>();
-    const prefetchStats = { ticks: 0, allowed: 0, started: 0, adopted: 0 };
+    const prefetchStats = {
+      ticks: 0,
+      allowed: 0,
+      started: 0,
+      adopted: 0,
+      /**
+       * Speculative work thrown away because the reader moved on.
+       *
+       * Split from `adopted` because they are the same job at two moments and
+       * the difference between them is the whole question. A guess the reader
+       * catches up with loses `speculative`, and with it the exemption in
+       * `detach` that was keeping it alive — so the *next* page turn cancels it.
+       * If that is what is happening, work is being started and discarded on a
+       * treadmill, and no ceiling anywhere can help.
+       */
+      killed: 0,
+    };
     const HEARTBEAT_MS = 15_000;
 
     /**
@@ -555,7 +575,7 @@ export default defineContentScript({
         `prefetch · lead=${readAheadLead(currentPage, prefetchReady)} at page ${currentPage ?? '?'}` +
           ` · tick=${tick} auto=${gate.enabled}` +
           ` · started=${prefetchStats.started} ready=${prefetchReady.size}` +
-          ` adopted=${prefetchStats.adopted} failed{${failed}}` +
+          ` adopted=${prefetchStats.adopted} killed=${prefetchStats.killed} failed{${failed}}` +
           ` misses=${prefetchMisses}/${MAX_CONSECUTIVE_MISSES}` +
           ` · allowed=${prefetchStats.allowed}/${prefetchStats.ticks} refused{${refused}}` +
           ` · lookahead=${gate.lookahead} speculative=${gate.inFlight}/${gate.speculativeAllowance ?? 1}` +
@@ -672,6 +692,7 @@ export default defineContentScript({
         prefetchStats.allowed = 0;
         prefetchStats.started = 0;
         prefetchStats.adopted = 0;
+        prefetchStats.killed = 0;
       }
 
       prefetchStats.ticks++;

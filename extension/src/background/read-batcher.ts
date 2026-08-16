@@ -129,6 +129,8 @@ export interface PageRead {
 
 interface Waiting extends ReadRequest {
   bytes: number;
+  /** When the page joined a lane, so the wait for company can be told apart. */
+  queuedAt: number;
   resolve: (read: PageRead) => void;
   reject: (err: unknown) => void;
   /** Already sent once inside a batch that came back useless. */
@@ -150,6 +152,7 @@ export function readPageBatched(req: ReadRequest): Promise<PageRead> {
     const waiting: Waiting = {
       ...req,
       bytes: req.crops.reduce((n, c) => n + c.byteLength, 0),
+      queuedAt: Date.now(),
       resolve,
       reject,
       retried: false,
@@ -223,6 +226,12 @@ async function dispatch(lane: string, batch: Waiting[]): Promise<void> {
 
   const ring = live[0]!.ring;
   const pages = live.map((w) => w.crops);
+  // How long the most patient page in this batch waited for company. Bounded by
+  // BATCH_LINGER_MS by construction, but printed rather than assumed: it is one
+  // of the four things that could be absorbing the pipeline's parallelism, and
+  // the only one this file can answer for.
+  const sentAt = Date.now();
+  const lingered = Math.max(...live.map((w) => sentAt - w.queuedAt));
 
   let routed: PagesRead;
   try {
@@ -242,9 +251,10 @@ async function dispatch(lane: string, batch: Waiting[]): Promise<void> {
     return;
   }
 
-  if (live.length > 1) {
-    log.info(`read ${live.length} pages in one request (${pages.reduce((n, p) => n + p.length, 0)} crops)`);
-  }
+  log.info(
+    `request done: ${live.length} page(s), ${pages.reduce((n, p) => n + p.length, 0)} crops, ` +
+      `lingered=${lingered}ms wire=${Date.now() - sentAt}ms`,
+  );
 
   live.forEach((w, i) => {
     const slots = routed.perPage[i] ?? w.crops.map(() => null);

@@ -200,6 +200,11 @@ export class KeyRing {
   ): Promise<T> {
     let waits = 0;
     let paced = 0;
+    // Time this request spent held back by *our own* pacing, as opposed to by
+    // Gemini. The two are indistinguishable from outside and need opposite
+    // fixes — one is a number we chose, the other is somebody else's latency.
+    let pacedMs = 0;
+    let backedOffMs = 0;
 
     for (;;) {
       const now = Date.now();
@@ -224,6 +229,7 @@ export class KeyRing {
           );
         }
         paced++;
+        pacedMs += wait;
         log.debug(`pacing: no free slot for ${wait} ms`);
         this.opts.onWait?.(wait, null);
         await sleep(wait, signal);
@@ -235,7 +241,14 @@ export class KeyRing {
       reserve(entry.id, now);
 
       try {
-        return await fn(this.provider(entry));
+        const sentAt = Date.now();
+        const out = await fn(this.provider(entry));
+        if (pacedMs > 0 || backedOffMs > 0) {
+          log.info(
+            `key wait: paced=${pacedMs}ms backoff=${backedOffMs}ms upstream=${Date.now() - sentAt}ms`,
+          );
+        }
+        return out;
       } catch (err) {
         if (!(err instanceof PipelineError)) throw err;
 
@@ -270,6 +283,7 @@ export class KeyRing {
         const wait = Math.min(backoffMs(verdict, waits), this.opts.maxWaitMs);
         if (waits >= MAX_MINUTE_RETRIES || wait <= 0) throw err;
         waits++;
+        backedOffMs += wait;
         log.info(`per-minute limit on ${label(entry)} — waiting ${wait} ms`);
         this.opts.onWait?.(wait, verdict);
         await sleep(wait, signal);

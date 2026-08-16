@@ -82,9 +82,27 @@ export async function runJob(
     },
   );
 
+  /**
+   * Where a job's wall-clock actually goes.
+   *
+   * Seven heartbeats on a cold 25-page gallery said the pipeline delivers a page
+   * every six seconds whether speculation may hold three pages or seven, which
+   * means the ceiling was never the constraint and something downstream absorbs
+   * the parallelism. Seven jobs in flight at one page per six seconds implies
+   * about forty seconds a job against a measured mean of eighteen.
+   *
+   * Four candidates, and they have four different fixes: our own rate pacing,
+   * time spent waiting for a batch to fill, upstream latency, and 503s. Guessing
+   * between them from the shape of the code is what produced the last two wrong
+   * answers, so each is timed separately and the totals are printed per job.
+   */
+  const began = Date.now();
+  const spent = { acquire: 0, detect: 0, read: 0 };
+
   /* ---- 1. bytes ---- */
   onProgress('acquire');
   const acquired = await acquire(source);
+  spent.acquire = Date.now() - began;
 
   /* ---- 2. OCR cache ---- */
   const detectorId = 'ppocr-v4-det@1';
@@ -114,6 +132,7 @@ export async function runJob(
 
   /* ---- 3. detect (offscreen) ---- */
   onProgress('detect');
+  const detectBegan = Date.now();
   const parked = await putBytes(acquired.hash, acquired.bytes, acquired.type);
 
   let detect;
@@ -142,6 +161,9 @@ export async function runJob(
     detect = reply.result;
   } finally {
     await releaseBytes(parked);
+    // Includes the wait for the serialisation lock, deliberately: a queue in
+    // front of the detector is time the job spends regardless of who owns it.
+    spent.detect = Date.now() - detectBegan;
   }
 
   if (detect.blocks.length === 0) {
@@ -155,6 +177,7 @@ export async function runJob(
 
   let items: ({ src: string; out: string } | null)[];
   let proposed: RoutedGroup[] = [];
+  const readBegan = Date.now();
   try {
     // Through the batcher: crops from up to three pages travel in one request,
     // which triples throughput without spending any more of the per-minute
@@ -192,6 +215,16 @@ export async function runJob(
     }
   } finally {
     await Promise.all(detect.blocks.map((b) => releaseBytes(b.cropRef)));
+    spent.read = Date.now() - readBegan;
+    // One line per job, at info, because the question "where does the time go"
+    // has been answered by reasoning twice and wrongly both times. `read` is the
+    // batcher, our own pacing and Gemini together; read-batcher.ts and
+    // KeyRing.ts print the first two so the remainder is upstream latency.
+    log.info(
+      `job timing: acquire=${spent.acquire}ms detect=${spent.detect}ms ` +
+        `read=${spent.read}ms total=${Date.now() - began}ms ` +
+        `(${detect.blocks.length} crops, ${source.prefetch ? 'speculative' : source.reading ? 'foreground' : 'lookahead'})`,
+    );
   }
 
   /* ---- 4b. what language was that, actually? ---- */
