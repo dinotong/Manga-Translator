@@ -432,13 +432,13 @@ export default defineContentScript({
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
         currentPage: page,
-        totalPages: cfg.total(document),
+        totalPages: cfg.total?.(document) ?? null,
         covered: prefetchCovered,
       });
       if (pick === null || page === null) return;
 
       const shown = scanImages(profile).find(isLoaded);
-      const guess = shown ? cfg.imageUrl(srcOf(shown), pick - page) : null;
+      const guess = shown ? (cfg.imageUrl?.(srcOf(shown), pick - page) ?? null) : null;
       if (!guess) return;
       if (byKey.has(guess)) {
         // The reader is already on it, or another element asked for it first.

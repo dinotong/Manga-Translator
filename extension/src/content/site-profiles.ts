@@ -1,4 +1,5 @@
 import { bumpTrailingNumber } from '../core/page-url';
+import type { PublishedPage } from '../core/prefetch';
 import type { SourceLang } from '../shared/lang';
 
 /**
@@ -52,20 +53,58 @@ export interface SiteProfile {
   pageNumber?(url: URL): number | null;
   navSelectors?: { next?: string; prev?: string };
   /**
-   * Present only where a later page's image URL can be derived without asking
-   * the site for anything.
+   * Present only where a later page's image URL can be had without asking the
+   * site for anything.
+   *
+   * Two ways to have one, and a profile supplies whichever it can:
+   *
+   *   - `published` — the site has already put the upcoming pages' real URLs in
+   *     its own DOM, and this reads them out. Strictly better than deriving: no
+   *     pattern to be wrong about and no request to a URL that may not exist.
+   *   - `imageUrl` — the site numbers its files, so page n+1's URL follows from
+   *     page n's. A guess, and treated as one (see MAX_CONSECUTIVE_MISSES).
    *
    * Absent is the default and the safe answer: without it the extension never
    * sends a speculative request to that host. See core/prefetch.ts for the rate
-   * rules that apply once it is present.
+   * rules that apply once it is present — they are the same either way.
+   *
+   * The hard rule for everything here: **read the DOM, never make a request**.
+   * A profile that needs to call the site's API to answer does not get to
+   * answer.
    */
   prefetch?: {
-    /** Last page of the gallery, read from the page itself. Null when unknown. */
-    total(doc: Document): number | null;
+    /**
+     * Last page of the gallery, read from the page itself. Null when unknown.
+     *
+     * Only bounds the derived path — `published` is bounded by what the site
+     * actually mounted — so a site may leave it out entirely.
+     */
+    total?(doc: Document): number | null;
     /** URL of the image `ahead` pages on from `currentSrc`, or null to give up. */
-    imageUrl(currentSrc: string, ahead: number): string | null;
+    imageUrl?(currentSrc: string, ahead: number): string | null;
+    /**
+     * Upcoming pages the site has already named, with where they sit.
+     *
+     * Positions come from the same read as the URLs so the two cannot disagree;
+     * core/prefetch.ts decides from them which pages are ahead of the reader.
+     */
+    published?(doc: Document): readonly PublishedPage[];
   };
   notes?: string;
+}
+
+/**
+ * Where an element's top edge is, relative to the top of the viewport.
+ *
+ * The one piece of geometry a profile is allowed to take, and it exists so that
+ * "is this page ahead of the reader?" is decided in core/prefetch.ts from
+ * numbers rather than here from elements. An element with no box at all reports
+ * a position that can never read as "ahead": a page the site has laid out
+ * nowhere is not a page the reader is about to reach.
+ */
+function topOf(el: Element): number {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? r.top : Number.NaN;
 }
 
 /**
@@ -164,19 +203,39 @@ const imhentai: SiteProfile = {
  * on `www.luscious.net`, which serve the same markup.
  *
  * The reader mounts a *window* of pages, not the whole album: measured, three
- * `.picture-row` elements at the top of an album, growing to five as the reader
- * scrolls, of which two or three have decoded and the rest already carry the
- * real `src`. So the pages just ahead of the reader are in the DOM, with their
- * true URLs, before they are needed — which is where the batcher's material
- * comes from here, without a single speculative request.
+ * `.picture-row` elements at the top of an album, growing to four or five as the
+ * reader scrolls, of which two or three have decoded and the rest already carry
+ * the real `src`. So the pages just ahead of the reader are in the DOM, with
+ * their true URLs, before they are needed.
  *
- * What is *not* in the DOM is anything further ahead, and that is why there is
- * no `prefetch` block: the image URL is
+ * That last sentence is why `prefetch.published` is here and why D-033's "this
+ * site cannot be read ahead" was answering a narrower question than it looked.
+ * The image URL is
  * `https://ah-img.luscious.net/syswift/<album>/<name>_p_01KGT1KM6FF7005SEG0RQA8HQA.1680x0.jpg`,
- * where the middle segment is a per-picture ULID. Nothing in it counts, so
- * nothing about page n tells us the URL of page n+1. The album's own GraphQL
- * endpoint knows, but asking it is an extra request to their server, which is
- * exactly what `prefetch.total` is forbidden to cost.
+ * where the middle segment is a per-picture ULID — nothing in it counts, so
+ * nothing about page n *predicts* page n+1, and there is deliberately no
+ * `imageUrl` here. But prediction was never the requirement. The site publishes
+ * the answer, and reading it is better than guessing would have been.
+ *
+ * Two facts hold it together, both read off the live reader on 2026-08-16:
+ *
+ *   - the wrapper around each `.picture-row` carries
+ *     `data-row-key="row-{i}-{ULID}"`, where `{i}` is the album-wide, zero-based
+ *     picture index. Measured across four scroll positions it ran 0,1,2 then
+ *     1..5 then 4..8 then 7..10 — an absolute counter, not a window offset.
+ *   - the rows ahead already have a real `src` while `complete` is still false
+ *     and `loading="lazy"`. Those are the pages worth having: the ordinary path
+ *     cannot start on them until the browser decides to fetch them.
+ *
+ * `?index=` is *not* used for this. Measured, it named row 3 while row 4 was the
+ * one under the reader — the row keys and the row positions come from one DOM
+ * read and cannot disagree with each other, which the URL can.
+ *
+ * There is no `total`: the album length is not written anywhere in the reader's
+ * markup (the virtualiser only exposes a total pixel height). The album's own
+ * GraphQL endpoint knows, and asking it is exactly the request this block is
+ * forbidden to cost. Nothing needs it — `published` cannot name a page the site
+ * has not mounted.
  */
 const luscious: SiteProfile = {
   id: 'luscious',
@@ -219,7 +278,21 @@ const luscious: SiteProfile = {
     const n = Number(raw);
     return Number.isInteger(n) && n >= 0 ? n + 1 : null;
   },
-  notes: 'Long strip. Image URLs carry a per-picture ULID — unpredictable, so no prefetch.',
+  prefetch: {
+    published: (doc) =>
+      Array.from(doc.querySelectorAll('.picture-row')).flatMap((row) => {
+        const index = row.parentElement
+          ?.getAttribute('data-row-key')
+          ?.match(/^row-(\d+)-/)?.[1];
+        const img = row.querySelector('picture img') as HTMLImageElement | null;
+        if (index === undefined || !img?.src) return [];
+        // The row rather than the image: an undecoded image has no box of its
+        // own, and the virtualiser gives the row its final height up front.
+        return [{ page: Number(index) + 1, url: img.src, top: topOf(row) }];
+      }),
+  },
+  notes:
+    'Long strip. Image URLs carry a per-picture ULID — unpredictable — but the mounted rows publish them.',
 };
 
 /**
@@ -227,26 +300,33 @@ const luscious: SiteProfile = {
  *
  * MPV (`/mpv/{gid}/{token}/`) is the "read all" strip the owner uses. Measured
  * on the live page: it lays out one `div#image_{n}.mimg` placeholder per page —
- * 40 of them for a 40-page gallery, so the length of the book is free — and
- * keeps a sliding window of nine decoded `<img id="imgsrc_{n}">` inside them,
- * dropping the ones behind. Two of those nine are ahead of the reader, which is
- * what the batcher gets to work with here.
+ * 26 of them for a 26-page gallery, so the length of the book is free — and
+ * fills a sliding window of them with `<img id="imgsrc_{n}">`, dropping the ones
+ * behind as the reader moves. The `{n}` in that id *is* the page number, which
+ * is the whole reason this site can be read ahead.
  *
  * `/s/{key}/{gid}-{page}` is the classic one-page-at-a-time reader, a single
- * `<img id="img">` inside `#i3`. Both are covered.
+ * `<img id="img">` inside `#i3`. Both are covered; only MPV publishes a window,
+ * and `published` simply answers with nothing on `/s/`.
  *
- * No `prefetch`, and this one is worth being precise about because it looks so
- * close to possible. The image URL is a Hath node,
+ * There is deliberately no `imageUrl`, and this is worth being precise about
+ * because it looks so close to possible. The image URL is a Hath node,
  * `https://<random>.<random>.hath.network:5515/h/<sha1>-<size>-<w>-<h>-wbp/keystamp=…;fileindex=…/3.webp`
  * — a different host per page, a per-file hash, a signed keystamp, and a
- * trailing number that is the *original filename*, not the page (page 5 of the
+ * trailing number that is the *original filename*, not the page (page 5 of one
  * measured gallery ends in `1.webp`). `bumpTrailingNumber` would produce a
- * request to the wrong host for a file that does not exist.
+ * request to the wrong host for a file that does not exist. So nothing here is
+ * predicted; everything is read.
  *
- * The page's own `window.imagelist` does hold real URLs — but measured, only
- * for the nine pages MPV has already loaded (`withI: 9` of 40), which are
- * exactly the pages that are already in the DOM as elements. Reading it would
- * add nothing, and filling it further means calling their API.
+ * D-033 noted `window.imagelist` holds real URLs for exactly the loaded window
+ * and dismissed it as adding nothing over the elements. That was right about the
+ * *set of pages* and wrong about the conclusion — those elements are precisely
+ * what should be read ahead — and it is moot besides: the content script runs in
+ * an isolated world and cannot see a page global at all. The DOM it can see.
+ *
+ * Measured on 2026-08-16 from the top of a 26-page gallery: `imgsrc_1` at the
+ * viewport top, `imgsrc_2` 1,847 px down, `imgsrc_3` 3,709 px down — i.e. one
+ * page inside the observer's two-screen reach and one beyond it.
  */
 const ehentai: SiteProfile = {
   id: 'e-hentai',
@@ -280,8 +360,25 @@ const ehentai: SiteProfile = {
     const n = u.pathname.match(/^\/s\/[0-9a-f]+\/\d+-(\d+)/i)?.[1];
     return n ? Number(n) : null;
   },
+  prefetch: {
+    // One placeholder per page, all of them present from the first paint. Not
+    // load-bearing — `published` can only ever name pages MPV has mounted — but
+    // it is free and true, and it is what stops the derived path from ever
+    // running past the end of a book if one is ever added here.
+    total: (doc) => {
+      const n = doc.querySelectorAll('.mimg').length;
+      return n > 0 ? n : null;
+    },
+    published: (doc) =>
+      Array.from(doc.querySelectorAll('#pane_images img[id^="imgsrc_"]')).flatMap((el) => {
+        const img = el as HTMLImageElement;
+        const page = Number(img.id.slice('imgsrc_'.length));
+        if (!Number.isInteger(page) || page < 1 || !img.src) return [];
+        return [{ page, url: img.src, top: topOf(img) }];
+      }),
+  },
   notes:
-    'MPV keeps ~9 decoded pages in the DOM. Image URLs are signed per-file Hath links — unpredictable, so no prefetch.',
+    'MPV mounts a sliding window of decoded pages and names each one in its id. Hath URLs are signed per file — read, never predicted.',
 };
 
 /**
