@@ -2,12 +2,12 @@ import {
   DEFAULT_CAPS,
   MAX_PAGES_PER_REQUEST,
   planBatch,
-  type Routed,
+  type RoutedGroup,
 } from '../core/batch';
 import { PipelineError } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import type { KeyRing } from '../translation/KeyRing';
-import type { ReadResult } from '../translation/GeminiProvider';
+import type { PagesRead, ReadResult } from '../translation/GeminiProvider';
 
 const log = makeLog('batch');
 
@@ -25,21 +25,37 @@ const log = makeLog('batch');
  *
  * ## The rule that shapes the whole file
  *
- * **The page the reader can see never waits for a batch to fill.** Collecting
- * work means delaying it, and delay on the visible page is the complaint being
- * fixed, not an acceptable price for fixing it. So a page that is actually on
- * screen is dispatched the moment it arrives — and it takes whatever pages were
- * already waiting along with it, because those cost nothing to add and would
- * otherwise need a request of their own.
+ * **The page the reader is reading never waits for a batch to fill.** Collecting
+ * work means delaying it, and delay on the page in front of the reader is the
+ * complaint being fixed, not an acceptable price for fixing it. So the page
+ * being read is dispatched the moment it arrives — and it takes whatever pages
+ * were already waiting along with it, because those cost nothing to add and
+ * would otherwise need a request of their own.
  *
- * What may wait is work for pages the reader has not reached. The
- * IntersectionObserver starts a page two screens early, which at a normal
- * reading pace is about twelve seconds of slack, so pausing such a page for a
- * few hundred milliseconds to let its neighbours join it is invisible. That
- * distinction is the difference between batching working and batching never
- * firing at all: measured on a luscious album, where there is no prefetch
- * profile and therefore nothing speculative, every job was dispatched alone and
- * not one request carried more than one page.
+ * "Being read" is the page nearest the middle of the viewport, decided in the
+ * content script (core/foreground.ts). It used to be "overlapping the viewport",
+ * which says the same thing on a paged reader and nothing at all on a long
+ * strip: a 1,700 px page overlaps a 768 px viewport for several screens either
+ * side of being read, so every job was foreground and every one went out alone —
+ * measured on e-hentai MPV, 25 pages, 18 requests, zero batched, even at a
+ * forced 1.3 s per screen.
+ *
+ * What may wait is work for pages the reader has not reached, whether or not
+ * they are also on screen. The IntersectionObserver starts a page two screens
+ * early, which at a normal reading pace is about twelve seconds of slack, so
+ * pausing such a page for a few hundred milliseconds to let its neighbours join
+ * it is invisible.
+ *
+ * ## What happens to a page that becomes the one being read while it waits
+ *
+ * It waits out the timer, and that is the whole exposure: BATCH_LINGER_MS from
+ * the moment it was queued, after which its lane flushes whether or not it found
+ * company. It cannot compound — the very next job for the page being read
+ * flushes the lane immediately and takes it along — so the worst case is a few
+ * hundred milliseconds against a job whose mean round trip is 18 s. A promotion
+ * channel back from the content script would need a message type, a scroll-time
+ * recomputation of which page is nearest, and a lane lookup, to save that. If
+ * the owner would rather have it, the seam is `flush(lane)`.
  *
  * A right-click goes further still and travels alone: it is the reader saying
  * "this one, now", usually because the last attempt was wrong, and giving it its
@@ -62,17 +78,20 @@ export const BATCH_LINGER_MS = 700;
  * Why this page is being read, which decides how patient it may be.
  *
  * - `manual` — a right-click. Goes out alone and immediately.
- * - `foreground` — the image is on the reader's screen. Goes out immediately,
- *   taking any waiting pages with it.
+ * - `foreground` — the page the reader is reading. Goes out immediately, taking
+ *   any waiting pages with it.
  * - `lookahead` — real work for a page the reader will reach, queued by the
- *   IntersectionObserver two screens early. Nobody is looking at it yet, so it
- *   may wait a moment for company.
- * - `speculative` — a prefetch guess. Same patience as `lookahead`.
+ *   IntersectionObserver two screens early. Nobody is reading it yet, so it may
+ *   wait a moment for company — including when it is on screen, which on a long
+ *   strip most of them are.
+ * - `speculative` — a page fetched ahead of the reader, either from a URL the
+ *   site published or from one derived from the current page's. Same patience as
+ *   `lookahead`.
  *
- * Splitting `foreground` from `lookahead` is what makes batching happen at all
- * on a site with no prefetch profile. Measured before the split: zero multi-page
- * requests across a four minute read of a luscious album, because every job was
- * nominally "foreground" and every one of them dispatched alone.
+ * Splitting `foreground` from `lookahead` is what makes batching happen at all.
+ * Measured before the split: zero multi-page requests across a four minute read
+ * of a luscious album, because every job was nominally "foreground" and every
+ * one of them dispatched alone.
  */
 export type ReadKind = 'manual' | 'foreground' | 'lookahead' | 'speculative';
 
@@ -94,9 +113,23 @@ export interface ReadRequest {
 
 type Slot = (ReadResult | null)[];
 
+/**
+ * One page's share of a reply: an answer per crop, plus any merges the model
+ * proposed for that page.
+ *
+ * The groups travel with the slots rather than being applied here because
+ * deciding whether to believe them needs the page's *geometry*, which lives with
+ * the caller (background/pipeline.ts, via core/merge-proposals.ts). This file
+ * only has to make sure a claim reaches the page it was made about.
+ */
+export interface PageRead {
+  slots: Slot;
+  groups: RoutedGroup[];
+}
+
 interface Waiting extends ReadRequest {
   bytes: number;
-  resolve: (slots: Slot) => void;
+  resolve: (read: PageRead) => void;
   reject: (err: unknown) => void;
   /** Already sent once inside a batch that came back useless. */
   retried: boolean;
@@ -112,8 +145,8 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
  * slot means the model said nothing usable about that crop — the caller already
  * knows how to show that as a refused box.
  */
-export function readPageBatched(req: ReadRequest): Promise<Slot> {
-  return new Promise<Slot>((resolve, reject) => {
+export function readPageBatched(req: ReadRequest): Promise<PageRead> {
+  return new Promise<PageRead>((resolve, reject) => {
     const waiting: Waiting = {
       ...req,
       bytes: req.crops.reduce((n, c) => n + c.byteLength, 0),
@@ -191,7 +224,7 @@ async function dispatch(lane: string, batch: Waiting[]): Promise<void> {
   const ring = live[0]!.ring;
   const pages = live.map((w) => w.crops);
 
-  let routed: Routed;
+  let routed: PagesRead;
   try {
     // No abort signal: one reader turning a page must not cancel a request that
     // is also carrying two other pages, and the reply is cached either way.
@@ -217,7 +250,7 @@ async function dispatch(lane: string, batch: Waiting[]): Promise<void> {
     const slots = routed.perPage[i] ?? w.crops.map(() => null);
     const answered = !routed.missed.includes(i);
     if (answered || w.retried || live.length === 1) {
-      w.resolve(slots);
+      w.resolve({ slots, groups: routed.groups[i] ?? [] });
       return;
     }
     // The reply covered this page not at all, and it shared the request with

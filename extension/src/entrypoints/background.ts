@@ -275,6 +275,9 @@ async function handleRequest(req: Request): Promise<Response> {
         from: 'ja',
         to: 'th',
         safetyOff: true,
+        // A key test asks one question — does this key work — and group
+        // instructions would only add tokens to the answer.
+        grouping: false,
       });
       // A trivial round trip is the only way to distinguish "key looks like a
       // key" from "key actually works", which is the question the user has.
@@ -445,7 +448,7 @@ async function diagnoseKeys(settings: Settings): Promise<DiagnosticLine[]> {
     try {
       const ring = await KeyRing.create(
         settings,
-        { from: 'ja', to: settings.lang.target },
+        { from: 'ja', to: settings.lang.target, grouping: false },
         { maxWaitMs: 0 },
       );
       await ring.translateBatch(['テスト']);

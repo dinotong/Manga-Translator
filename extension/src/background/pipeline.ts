@@ -1,5 +1,7 @@
 import { getOcr, getTranslations, putOcr, putTranslations, evictIfNeeded } from '../cache/stores';
 import { ocrKey, type OcrBlockRecord, translationKey } from '../cache/db';
+import { planMerges } from '../core/merge-proposals';
+import type { RoutedGroup } from '../core/batch';
 import { readPageBatched } from './read-batcher';
 import { putBytes, releaseBytes, takeBytes } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
@@ -45,6 +47,8 @@ export async function runJob(
     {
       from,
       to,
+      // Absent means on. See shared/settings.ts for why this is not versioned.
+      grouping: settings.translation.modelGrouping !== false,
       ...(source.setKey && settings.translation.contextBubbles > 0
         ? { context: (recentContext.get(source.setKey) ?? []).slice(-settings.translation.contextBubbles) }
         : {}),
@@ -128,25 +132,31 @@ export async function runJob(
   const crops = await Promise.all(detect.blocks.map((b) => takeBytes(b.cropRef)));
 
   let items: ({ src: string; out: string } | null)[];
+  let proposed: RoutedGroup[] = [];
   try {
     // Through the batcher: crops from up to three pages travel in one request,
     // which triples throughput without spending any more of the per-minute
-    // budget. A page the reader can see is dispatched immediately and never
-    // waits for a batch to fill; only guesses queue. See background/read-batcher.ts.
-    items = await readPageBatched({
+    // budget. The page the reader is reading is dispatched immediately and never
+    // waits for a batch to fill. See background/read-batcher.ts.
+    const read = await readPageBatched({
       lane: readLane(source, from, to, gemini.model),
       jobId: source.elementKey,
       crops,
+      // `reading`, not "on screen". On a long strip nearly every page is on
+      // screen when its job starts, so that test called everything foreground
+      // and nothing ever batched. See core/foreground.ts.
       kind: source.manual
         ? 'manual'
         : source.prefetch
           ? 'speculative'
-          : source.onScreen
+          : source.reading
             ? 'foreground'
             : 'lookahead',
       ring: gemini,
       ...(signal ? { signal } : {}),
     });
+    items = read.slots;
+    proposed = read.groups;
   } catch (err) {
     if (err instanceof PipelineError && err.code === 'PROVIDER_REFUSED') {
       // One panel poisoned the batch. Re-ask bubble by bubble so the rest of the
@@ -162,12 +172,60 @@ export async function runJob(
     await Promise.all(detect.blocks.map((b) => releaseBytes(b.cropRef)));
   }
 
-  /* ---- 5. persist, split across the two stores ---- */
+  /* ---- 5. believe the model's grouping only where geometry agrees ---- */
+  //
+  // The model has read every crop and may say some of them are one continuous
+  // sentence — the afterword case, where handwritten columns of uneven length
+  // defeat the thresholds in core/grouping.ts. It is a proposal: core/
+  // merge-proposals.ts refuses anything that was not already adjacent, is a
+  // whole bubble rather than a fragment, has the wrong glyph size, or would
+  // draw a plate over the artwork. A refusal costs nothing, because the reply
+  // still carries one item per crop.
+  const aspect = detect.natural.w > 0 ? detect.natural.h / detect.natural.w : 1;
+  const merges = planMerges(
+    detect.blocks.map((b) => ({ rect: b.rect, direction: b.direction, glyph: b.glyph })),
+    proposed.map((g) => ({ members: g.blocks })),
+    aspect,
+  );
+  if (proposed.length > 0) {
+    log.info(
+      `model proposed ${proposed.length} merge(s): ${merges.accepted.length} kept, ` +
+        `${merges.rejected.map((r) => r.reason).join(',') || 'none'} refused`,
+    );
+  }
+  /** Block index -> the merge that owns it. */
+  const merged = new Map<number, (typeof merges.accepted)[number]>();
+  for (const a of merges.accepted) for (const m of a.members) merged.set(m, a);
+
+  /* ---- 6. persist, split across the two stores ---- */
   const records: OcrBlockRecord[] = [];
   const blocks: OverlayBlock[] = [];
   const pairs: { src: string; out: string }[] = [];
 
   detect.blocks.forEach((b, i) => {
+    const owner = merged.get(i);
+    // A merged run is written once, at its first member, so the page keeps
+    // reading order and the other members simply vanish into it.
+    if (owner && owner.members[0] !== i) return;
+
+    if (owner) {
+      const claim = proposed[owner.proposal];
+      const parts = owner.members.map((m) => items[m]);
+      // The joined fallback covers a model that names a group but gives it no
+      // text: the fragments it did return are in reading order and are better
+      // than nothing.
+      const src = (claim?.src ?? '').trim() || parts.map((p) => p?.src ?? '').join('');
+      const out = (claim?.out ?? '').trim() || parts.map((p) => p?.out ?? '').join('');
+      if (!src && !out) return;
+
+      const score = owner.members.reduce((n, m) => n + (detect.blocks[m]?.score ?? 0), 0) /
+        owner.members.length;
+      records.push({ rect: owner.rect, src, direction: b.direction, score });
+      blocks.push({ rect: owner.rect, text: out || src, source: src, direction: b.direction });
+      if (src && out) pairs.push({ src, out });
+      return;
+    }
+
     const item = items[i];
     if (!item) {
       // Refused individually. Keep the box so the user can see which panel was
@@ -184,6 +242,12 @@ export async function runJob(
     if (src && out) pairs.push({ src, out });
   });
 
+  // The records written here are the *merged* blocks, so the grouping is stored
+  // with the reading under the image's hash and a second look at the page
+  // reproduces it exactly. That matters more than it looks: the model is not
+  // deterministic, and without this the same page could group one way now and
+  // another way on the next read, which would make any bug in this area
+  // impossible to reproduce and therefore impossible to fix.
   await putOcr({
     key,
     imageHash: acquired.hash,

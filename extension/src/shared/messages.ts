@@ -90,18 +90,26 @@ export interface JobSource {
    */
   distance?: number;
   /**
-   * The image was actually intersecting the viewport when the job was queued.
+   * This is the page the reader is looking at — not merely one that overlaps
+   * the viewport.
    *
    * The IntersectionObserver starts work two screens early, so most automatic
-   * jobs are for pages the reader cannot see yet. Those two cases look identical
-   * to the worker and are not: a page on screen has someone waiting for it and
-   * must go out immediately, while a page still two screens away has about
-   * twelve seconds of slack at a normal reading pace and can wait a moment to
-   * share a request with its neighbours. Without this distinction batching never
-   * fires at all on a site with no prefetch profile — measured, zero multi-page
-   * requests across a four minute read.
+   * jobs are for pages the reader has not reached. Those two cases look
+   * identical to the worker and are not: the page being read has someone waiting
+   * for it and must go out immediately, while a page still two screens away has
+   * about twelve seconds of slack at a normal reading pace and can wait a moment
+   * to share a request with its neighbours.
+   *
+   * This used to be `onScreen`, straight from `getBoundingClientRect`. On a
+   * paged reader that is the same statement; on a long strip it is not one at
+   * all, because a 1,700 px page overlaps a 768 px viewport for several screens
+   * of scrolling either side of being read. Measured on e-hentai MPV: 25 pages,
+   * 18 requests, zero batched — every job was nominally on screen and every one
+   * of them went out alone. Only the content script can tell the difference,
+   * because only it can compare the pages against each other; see
+   * core/foreground.ts.
    */
-  onScreen?: boolean;
+  reading?: boolean;
 }
 
 /* ---------- content script -> service worker (over a long-lived Port) ---------- */
@@ -174,6 +182,16 @@ export interface DetectedBlock {
   rect: NormRect;
   direction: Direction;
   score: number;
+  /**
+   * Size of one glyph across the reading direction, in image-width units.
+   *
+   * Measured from the block's own lines while they still exist — they do not
+   * survive this boundary — because the worker cannot recover it afterwards: a
+   * block's width is one glyph for a lone column and five for a bubble. Anything
+   * reasoning in glyph units on the far side needs this, which today means
+   * core/merge-proposals.ts. Zero means "not measured".
+   */
+  glyph: number;
   /** Crop of this block, parked in Cache Storage as image/webp. */
   cropRef: ImageRef;
 }

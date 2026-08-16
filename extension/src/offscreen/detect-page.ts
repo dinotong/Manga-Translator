@@ -1,4 +1,5 @@
 import { inkRatio } from '../core/components';
+import { blockGlyph } from '../core/direction';
 import { padRect, toNorm } from '../core/geometry';
 import { groupLinesIntoBlocks, readingOrder } from '../core/grouping';
 import { type PresetName, PRESETS, planResolution, resolutionWarning } from '../core/resolution';
@@ -102,6 +103,11 @@ export async function detectPage(
         rect: toNorm(block.rect, plan.det),
         direction: block.direction,
         score: block.score,
+        // Divided by the detection width, not the height, so it is in the same
+        // units as a normalized x — which is the space core/ compares lengths
+        // in. The lines are dropped from here on, so this is the last chance to
+        // measure it.
+        glyph: blockGlyph(block.lines, block.direction) / plan.det.w,
         cropRef: ref,
       });
     } finally {

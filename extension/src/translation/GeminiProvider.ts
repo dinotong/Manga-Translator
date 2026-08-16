@@ -1,4 +1,14 @@
-import { cropId, pageHeader, type ReadItem, routeItems, type Routed } from '../core/batch';
+import {
+  cropId,
+  GROUP_INSTRUCTIONS,
+  pageHeader,
+  type ReadGroup,
+  type ReadItem,
+  routeGroups,
+  routeItems,
+  type Routed,
+  type RoutedGroup,
+} from '../core/batch';
 import { classifyQuotaError } from '../core/quota';
 import { bytesToBase64 } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
@@ -28,6 +38,15 @@ export interface GeminiConfig {
   from: SourceLang;
   to: TargetLang;
   safetyOff: boolean;
+  /**
+   * Ask the model which crops are fragments of one continuous text.
+   *
+   * What comes back is a proposal, not an instruction — core/merge-proposals.ts
+   * vetoes it on geometry — and the prompt still demands one item per crop, so
+   * turning this off gives back the exact answer the page would have had before
+   * groups existed. That is what makes it a safe switch to hand the reader.
+   */
+  grouping: boolean;
   /** Previous page's bubbles, so dialogue stays coherent across a page turn. */
   context?: readonly { src: string; out: string }[];
 }
@@ -35,6 +54,12 @@ export interface GeminiConfig {
 export interface ReadResult {
   src: string;
   out: string;
+}
+
+/** A batched reply: answers routed to their crops, plus any merges proposed. */
+export interface PagesRead extends Routed {
+  /** Per page, in the order the pages were sent. Empty when grouping is off. */
+  groups: RoutedGroup[][];
 }
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -52,6 +77,21 @@ const RESPONSE_SCHEMA = {
           out: { type: 'string' },
         },
         required: ['id', 'src', 'out'],
+      },
+    },
+    // Deliberately absent from `required`: a page with nothing to group has to
+    // be able to say so by omitting the field, and a schema that demands it
+    // invites the model to produce one to fill the slot.
+    groups: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          ids: { type: 'array', items: { type: 'string' } },
+          src: { type: 'string' },
+          out: { type: 'string' },
+        },
+        required: ['ids', 'src', 'out'],
       },
     },
   },
@@ -73,7 +113,7 @@ const SAFETY_OFF = [
   'HARM_CATEGORY_DANGEROUS_CONTENT',
 ].map((category) => ({ category, threshold: 'BLOCK_NONE' }));
 
-function buildPrompt(cfg: GeminiConfig, pages = 1): string {
+function buildPrompt(cfg: GeminiConfig, pages = 1, grouping = cfg.grouping): string {
   const src = LANG_NAMES[cfg.from] ?? cfg.from;
   const dst = LANG_NAMES[cfg.to] ?? cfg.to;
 
@@ -103,6 +143,7 @@ function buildPrompt(cfg: GeminiConfig, pages = 1): string {
     `  src - the ${srcField} text exactly as printed, no corrections`,
     `  out - a natural ${dst} translation`,
     '',
+    ...(grouping ? [...GROUP_INSTRUCTIONS, ''] : []),
     'Rules:',
     `- Translate the way ${dst} manga actually reads, not literally word for word.`,
     '- Never add information that is not in the source. Never invent dialogue.',
@@ -153,10 +194,10 @@ export class GeminiProvider {
   async readPages(
     pages: readonly (readonly ArrayBuffer[])[],
     signal?: AbortSignal,
-  ): Promise<Routed> {
+  ): Promise<PagesRead> {
     const cropsPerPage = pages.map((p) => p.length);
     if (cropsPerPage.every((n) => n === 0)) {
-      return { perPage: cropsPerPage.map(() => []), missed: [] };
+      return { perPage: cropsPerPage.map(() => []), missed: [], groups: cropsPerPage.map(() => []) };
     }
 
     const parts: unknown[] = [{ text: buildPrompt(this.cfg, pages.length) }];
@@ -173,7 +214,13 @@ export class GeminiProvider {
       });
     });
 
-    return routeItems(cropsPerPage, await this.call(parts, signal));
+    const reply = await this.call(parts, signal);
+    return {
+      ...routeItems(cropsPerPage, reply.items),
+      groups: this.cfg.grouping
+        ? routeGroups(cropsPerPage, reply.groups)
+        : cropsPerPage.map(() => []),
+    };
   }
 
   /**
@@ -233,11 +280,13 @@ export class GeminiProvider {
       items: live.map((x, n) => ({ id: String(n + 1), src: x.t })),
     });
 
-    const items = await this.call(
+    const { items } = await this.call(
       [
         {
           text: [
-            buildPrompt(this.cfg),
+            // Grouping off on this path whatever the setting says: it is handed
+            // strings that were already read and has no images to regroup.
+            buildPrompt(this.cfg, 1, false),
             '',
             'The text is given below as JSON instead of images. Echo each src back unchanged.',
             payload,
@@ -257,7 +306,10 @@ export class GeminiProvider {
     return out;
   }
 
-  private async call(parts: unknown[], signal?: AbortSignal): Promise<ReadItem[]> {
+  private async call(
+    parts: unknown[],
+    signal?: AbortSignal,
+  ): Promise<{ items: ReadItem[]; groups: ReadGroup[] }> {
     let res: Response;
     try {
       res = await fetch(`${ENDPOINT}/${encodeURIComponent(this.cfg.model)}:generateContent`, {
@@ -296,7 +348,8 @@ export class GeminiProvider {
 
     const text = candidate?.content?.parts?.[0]?.text ?? '';
     try {
-      return (JSON.parse(text) as { items?: ReadItem[] }).items ?? [];
+      const json = JSON.parse(text) as { items?: ReadItem[]; groups?: ReadGroup[] };
+      return { items: json.items ?? [], groups: json.groups ?? [] };
     } catch {
       log.warn('unparsable response', text.slice(0, 200));
       throw new PipelineError('VALIDATION_FAILED', 'Gemini returned unparsable JSON');

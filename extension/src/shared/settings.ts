@@ -95,6 +95,18 @@ export interface Settings {
       timeoutMs: number;
     };
     contextBubbles: number;
+    /**
+     * Let the model say which detected blocks are fragments of one continuous
+     * text, so a sentence split across several columns is translated whole.
+     *
+     * What comes back is a proposal and geometry vetoes it
+     * (core/merge-proposals.ts), and the reply still carries one item per crop
+     * either way — so turning this off restores the previous behaviour exactly,
+     * which is the point of it being a switch at all. Optional rather than
+     * versioned: an absent field means "on", so nobody's stored settings need
+     * migrating for it.
+     */
+    modelGrouping?: boolean;
   };
 
   ocr: {
@@ -200,6 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
       timeoutMs: 60_000,
     },
     contextBubbles: 3,
+    modelGrouping: true,
   },
   ocr: { runtime: 'auto', preset: 'balanced', dilateRatio: 0.01 },
   display: {

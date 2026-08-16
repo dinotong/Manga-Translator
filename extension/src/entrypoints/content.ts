@@ -2,9 +2,17 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { acquire } from '../content/acquire';
 import { Overlay } from '../content/overlay/overlay';
 import { elementKey, isLoaded, isPageCandidate, pageShape, scanImages } from '../content/scan';
-import { profileFor } from '../content/site-profiles';
+import { profileFor, type SiteProfile } from '../content/site-profiles';
+import { readingNow } from '../core/foreground';
 import { classifyPage } from '../core/page-kind';
-import { effectiveLookahead, MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
+import {
+  effectiveLookahead,
+  MAX_CONSECUTIVE_MISSES,
+  nextPublished,
+  pickPrefetch,
+  prefetchAllowed,
+  type PrefetchGate,
+} from '../core/prefetch';
 import { clampInFlight, compareWork, type WorkKind } from '../core/scheduling';
 import { MAX_PAGES_PER_REQUEST } from '../core/batch';
 import { isAutoOn, siteKey } from '../core/site-scope';
@@ -77,7 +85,17 @@ export default defineContentScript({
       imgs: Set<HTMLImageElement>;
       /** Never claimed by an element: rate-limited, and silent when it fails. */
       speculative: boolean;
-      /** Gallery page a speculative job was guessed for; null for real work. */
+      /**
+       * The URL was derived from another page's rather than read off this one.
+       *
+       * Only a guess can be *wrong* about a URL, so only a guess counts towards
+       * MAX_CONSECUTIVE_MISSES. A published URL that fails says something about
+       * that one page — an expired Hath keystamp, a picture pulled — not about
+       * whether the site can be read ahead, and each published page is attempted
+       * at most once anyway because it is marked covered before the request.
+       */
+      guessed: boolean;
+      /** Gallery page a speculative job was started for; null for real work. */
       page: number | null;
       /** Last stage reported, so an element that joins late shows the truth. */
       stage: Stage;
@@ -324,6 +342,7 @@ export default defineContentScript({
         key,
         imgs: new Set([img]),
         speculative: false,
+        guessed: false,
         page: null,
         stage: 'acquire',
       };
@@ -342,7 +361,7 @@ export default defineContentScript({
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
           distance: distance(img, window.innerHeight / 2),
-          ...(inViewport(img) ? { onScreen: true } : {}),
+          ...(isBeingRead(img) ? { reading: true } : {}),
           ...(kind === 'manual' ? { manual: true } : {}),
           ...(redo.has(img) ? { force: true } : {}),
           ...(got.kind === 'bytes' ? { image: got.ref } : {}),
@@ -364,6 +383,33 @@ export default defineContentScript({
       const settled = new Promise<void>((resolve) => waiters.set(job.id, resolve));
       send({ t: 'RUN', jobId: job.id, source });
       await settled;
+    }
+
+    /**
+     * Is this the page the reader is looking at, as opposed to one of several
+     * that happen to overlap the viewport?
+     *
+     * Only this side can answer it: the worker sees one job at a time and has
+     * nothing to compare it against. Measured as late as possible — right before
+     * the RUN message goes out — because acquiring the bytes takes long enough
+     * for the reader to have moved.
+     *
+     * The comparison set is every page the scanner currently accepts, plus this
+     * one, so a manual request for something the scanner would not have picked
+     * is still judged against the pages around it. See core/foreground.ts.
+     */
+    function isBeingRead(img: HTMLImageElement): boolean {
+      const centre = window.innerHeight / 2;
+      const candidates = scanImages(profile);
+      if (!candidates.includes(img)) candidates.push(img);
+      const nearest = readingNow(
+        candidates.map((el) => ({
+          key: elementKey(el),
+          distance: distance(el, centre),
+          onScreen: inViewport(el),
+        })),
+      );
+      return nearest !== null && nearest === elementKey(img);
     }
 
     /** Forget a job and release whatever is waiting on it. */
@@ -399,6 +445,53 @@ export default defineContentScript({
       return n;
     }
 
+    /** One page worth fetching ahead, and where its URL came from. */
+    interface PrefetchTarget {
+      page: number;
+      url: string;
+      guessed: boolean;
+    }
+
+    /**
+     * A page the site itself has already named.
+     *
+     * Preferred over a derived URL wherever a profile offers both, because there
+     * is nothing about it to be wrong. No site does offer both today; the order
+     * is here so that when one does, the guess is the fallback and not the
+     * default.
+     */
+    function fromPublished(cfg: SiteProfile['prefetch'], gate: PrefetchGate): PrefetchTarget | null {
+      if (!cfg?.published) return null;
+      const next = nextPublished({
+        pages: cfg.published(document),
+        viewportHeight: window.innerHeight,
+        lookahead: gate.lookahead,
+        covered: prefetchCovered,
+      });
+      return next ? { page: next.page, url: next.url, guessed: false } : null;
+    }
+
+    /** A page whose URL follows from the one on screen. See core/page-url.ts. */
+    function fromPattern(
+      cfg: SiteProfile['prefetch'],
+      url: URL,
+      gate: PrefetchGate,
+    ): PrefetchTarget | null {
+      if (!cfg?.imageUrl) return null;
+      const page = profile.pageNumber?.(url) ?? null;
+      const pick = pickPrefetch({
+        ...gate,
+        currentPage: page,
+        totalPages: cfg.total?.(document) ?? null,
+        covered: prefetchCovered,
+      });
+      if (pick === null || page === null) return null;
+
+      const shown = scanImages(profile).find(isLoaded);
+      const guess = shown ? (cfg.imageUrl(srcOf(shown), pick - page) ?? null) : null;
+      return guess ? { page: pick, url: guess, guessed: true } : null;
+    }
+
     function prefetchTick(): void {
       const cfg = profile.prefetch;
       if (!cfg) return;
@@ -413,60 +506,60 @@ export default defineContentScript({
         prefetchMisses = 0;
       }
 
-      const page = profile.pageNumber?.(url) ?? null;
-      const pick = pickPrefetch({
+      // One gate, both ways of naming a page. Whether the URL was read off the
+      // page or derived from another one changes nothing about how often, how
+      // many at a time, or whether at all — see core/prefetch.ts.
+      const gate: PrefetchGate = {
         now: Date.now(),
         enabled: auto(),
         // Capped by what the cache will actually keep: reading further ahead
-        // than that evicts the earliest guesses before the reader reaches them,
+        // than that evicts the earliest pages before the reader reaches them,
         // spending the request and the quota for nothing.
         lookahead: effectiveLookahead(settings.performance.prefetchLookahead, settings.cache.maxPages),
         visible: document.visibilityState === 'visible',
         foregroundWaiting: queue.length > 0,
         inFlight: speculativeInFlight(),
-        // Several guesses may be *prepared* at once so their crops leave in one
+        // Several pages may be *prepared* at once so their crops leave in one
         // Gemini request. Not a second rate knob — the gap between starts and
         // the "nothing while hidden" rule are untouched, and the number of
         // outbound requests goes down rather than up. See core/batch.ts.
         batchSize: MAX_PAGES_PER_REQUEST,
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
-        currentPage: page,
-        totalPages: cfg.total?.(document) ?? null,
-        covered: prefetchCovered,
-      });
-      if (pick === null || page === null) return;
+      };
+      if (!prefetchAllowed(gate)) return;
 
-      const shown = scanImages(profile).find(isLoaded);
-      const guess = shown ? (cfg.imageUrl?.(srcOf(shown), pick - page) ?? null) : null;
-      if (!guess) return;
-      if (byKey.has(guess)) {
+      const target = fromPublished(cfg, gate) ?? fromPattern(cfg, url, gate);
+      if (!target) return;
+
+      if (byKey.has(target.url)) {
         // The reader is already on it, or another element asked for it first.
-        prefetchCovered.add(pick);
+        prefetchCovered.add(target.page);
         return;
       }
 
       // Marked covered before the request, so a failure is not retried in a loop.
-      prefetchCovered.add(pick);
+      prefetchCovered.add(target.page);
       prefetchLastStart = Date.now();
 
       const job: Job = {
         id: `p${++jobCounter}`,
-        key: guess,
+        key: target.url,
         imgs: new Set(),
         speculative: true,
-        page: pick,
+        guessed: target.guessed,
+        page: target.page,
         stage: 'acquire',
       };
       active.set(job.id, job);
-      byKey.set(guess, job);
-      log.debug(`prefetch page ${pick}`);
+      byKey.set(target.url, job);
+      log.debug(`prefetch page ${target.page} (${target.guessed ? 'guessed' : 'published'})`);
       send({
         t: 'RUN',
         jobId: job.id,
         source: {
-          elementKey: `prefetch-${pick}`,
-          url: guess,
+          elementKey: `prefetch-${target.page}`,
+          url: target.url,
           natural: { w: 0, h: 0 },
           pageUrl: location.href,
           setKey,
@@ -587,7 +680,7 @@ export default defineContentScript({
         // what lets the next turn onto this page skip the round trip entirely.
         hashOfUrl.set(job.key, msg.hash);
         // The guessed URL was a real image, so the pattern holds for this book.
-        if (job.speculative) prefetchMisses = 0;
+        if (job.speculative && job.guessed) prefetchMisses = 0;
 
         const stale: HTMLImageElement[] = [];
         for (const img of job.imgs) {
@@ -617,11 +710,18 @@ export default defineContentScript({
         for (const img of job.imgs) overlay.status(img, msg.hint || msg.message, 'error');
       } else {
         // A prefetch that failed is not the reader's problem: they never asked
-        // for that page and may never reach it. But a guessed URL that does not
-        // exist says the pattern is wrong for this gallery, and guessing on is
-        // just noise at someone else's server — so two in a row stop it.
+        // for that page and may never reach it. But a *guessed* URL that does
+        // not exist says the pattern is wrong for this gallery, and guessing on
+        // is just noise at someone else's server — so two in a row stop it.
+        //
+        // A URL the site published is different in kind. It was not our idea, it
+        // failed for a reason belonging to that one page, and the next page's
+        // URL is read separately rather than derived from this one — so it
+        // proves nothing about the pages after it. Each is tried at most once
+        // (marked covered before the request), so the waste is bounded without
+        // needing to switch the feature off for the rest of the gallery.
         log.debug(`prefetch failed: ${msg.code} ${msg.message}`);
-        if (msg.code === 'ACQUIRE_FAILED') {
+        if (msg.code === 'ACQUIRE_FAILED' && job.guessed) {
           prefetchMisses++;
           if (prefetchMisses >= MAX_CONSECUTIVE_MISSES) {
             log.info(`prefetch off for this gallery after ${prefetchMisses} bad guesses`);

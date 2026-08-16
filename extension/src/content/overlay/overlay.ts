@@ -3,6 +3,7 @@ import type { OverlayBlock } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
+import { placePanels } from '../../core/panel-layout';
 import { panelRect, plateAlphaOver, plateInPanel } from '../../core/panel-shape';
 
 /**
@@ -153,7 +154,20 @@ export class Overlay {
 
     this.detach(target);
     const aspect = result.natural.w > 0 ? result.natural.h / result.natural.w : 1;
-    const panels = result.blocks.map((b) => panelRect(b.rect, b.direction, aspect));
+    // Widen each block into a panel the target language can be set across, then
+    // push the panels off each other. Nothing did the second part before, and
+    // widening is exactly what makes it necessary: two neighbouring columns
+    // whose panels overlap leave both texts unreadable. `placePanels` slides
+    // where there is room and gives width back where there is not, and never
+    // uncovers the ink it is there to hide — see core/panel-layout.ts. On
+    // ordinary pages it changes nothing at all.
+    const panels = placePanels(
+      result.blocks.map((b) => ({
+        anchor: b.rect,
+        panel: panelRect(b.rect, b.direction, aspect),
+      })),
+      aspect,
+    ).map((p) => p.rect);
 
     const layer = document.createElement('div');
     layer.className = 'mt-layer';

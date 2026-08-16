@@ -1,4 +1,3 @@
-import type { Routed } from '../core/batch';
 import {
   allSpent,
   type ApiKeyEntry,
@@ -18,7 +17,12 @@ import { loadKeyStatuses, saveKeyStatuses, tidyKeyStatuses } from '../shared/key
 import { makeLog } from '../shared/log';
 import { loadRates, ratesNow, reserve } from '../shared/rate-record';
 import type { Settings } from '../shared/settings';
-import { GeminiProvider, type GeminiConfig, type ReadResult } from './GeminiProvider';
+import {
+  GeminiProvider,
+  type GeminiConfig,
+  type PagesRead,
+  type ReadResult,
+} from './GeminiProvider';
 
 const log = makeLog('keyring');
 
@@ -133,7 +137,7 @@ export class KeyRing {
   async readPages(
     pages: readonly (readonly ArrayBuffer[])[],
     signal?: AbortSignal,
-  ): Promise<Routed> {
+  ): Promise<PagesRead> {
     return this.run((p) => p.readPages(pages, signal), signal);
   }
 
