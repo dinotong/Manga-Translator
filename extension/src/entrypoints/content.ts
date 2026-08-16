@@ -102,6 +102,16 @@ export default defineContentScript({
       guessed: boolean;
       /** Gallery page a speculative job was started for; null for real work. */
       page: number | null;
+      /** When the job was created, so a discarded one can say what it cost. */
+      startedAt: number;
+      /**
+       * The reader caught up with this guess while it was still running.
+       *
+       * Recorded rather than inferred from `speculative`, which `adopt` clears —
+       * the two states are the same job at different moments and telling them
+       * apart is the entire question the cancel log exists to answer.
+       */
+      adopted: boolean;
       /** Last stage reported, so an element that joins late shows the truth. */
       stage: Stage;
     }
@@ -279,7 +289,11 @@ export default defineContentScript({
         // owner's complaint, one instance at a time. Counting it says how often
         // the lead ran out, without needing them to describe it.
         prefetchStats.adopted++;
-        log.debug(`adopted prefetch of page ${job.page} — the reader arrived`);
+        job.adopted = true;
+        log.info(
+          `adopted page ${job.page} after ${Date.now() - job.startedAt}ms at stage ${job.stage}` +
+            ' — the reader caught up with an unfinished guess',
+        );
       }
       // No longer a guess: someone is looking at it. That also frees the single
       // speculative slot for the next page ahead.
@@ -355,6 +369,8 @@ export default defineContentScript({
         speculative: false,
         guessed: false,
         page: null,
+        startedAt: Date.now(),
+        adopted: false,
         stage: 'acquire',
       };
       active.set(job.id, job);
@@ -439,7 +455,17 @@ export default defineContentScript({
       // Counted before the state is thrown away. `page` is set only on work the
       // prefetcher started, and survives `adopt`, so this counts exactly the
       // speculative pages that were paid for and then abandoned.
-      if (job.page !== null) prefetchStats.killed++;
+      if (job.page !== null) {
+        prefetchStats.killed++;
+        // At info, with everything needed to judge it from a single occurrence.
+        // Waiting for a tally to make this visible needs the reader to be losing
+        // the race, which depends on upstream latency we cannot summon on
+        // demand — so the path reports itself instead.
+        log.info(
+          `discarded page ${job.page} after ${Date.now() - job.startedAt}ms ` +
+            `at stage ${job.stage} (adopted=${job.adopted}) — work paid for and thrown away`,
+        );
+      }
       send({ t: 'CANCEL', jobId: job.id });
       settle(job);
     }
@@ -720,6 +746,8 @@ export default defineContentScript({
         speculative: true,
         guessed: target.guessed,
         page: target.page,
+        startedAt: Date.now(),
+        adopted: false,
         stage: 'acquire',
       };
       active.set(job.id, job);

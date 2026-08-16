@@ -67,9 +67,12 @@ const log = makeLog('batch');
  *
  * It waits out the timer, and that is the whole exposure: BATCH_LINGER_MS from
  * the moment it was queued, after which its lane flushes whether or not it found
- * company. It cannot compound — the very next job for the page being read
- * flushes the lane immediately and takes it along — so the worst case is a few
- * hundred milliseconds against a job whose mean round trip is 18 s. A promotion
+ * company. That is enforced by `remainingLinger` rather than merely stated — a
+ * page left behind by the crop cap gets what remains of its own window, not a
+ * fresh one, which is how this promise was being broken at more than twice the
+ * window before it was measured. It cannot compound — the very next job for the
+ * page being read flushes the lane immediately and takes it along — so the worst
+ * case is one window against a job whose round trip measures 2.8-50 s. A promotion
  * channel back from the content script would need a message type, a scroll-time
  * recomputation of which page is nearest, and a lane lookup, to save that. If
  * the owner would rather have it, the seam is `flush(lane)`.
@@ -237,6 +240,18 @@ export function readPageBatched(req: ReadRequest): Promise<PageRead> {
   });
 }
 
+/**
+ * How much of its window a page still has, given when it started waiting.
+ *
+ * Pure and exported so the invariant at the top of this file — no page waits
+ * longer than BATCH_LINGER_MS from the moment it was queued — is a thing that
+ * can be checked rather than a thing that is claimed. It was claimed, and
+ * measurement found it false at more than twice the window.
+ */
+export function remainingLinger(oldestQueuedAt: number, now: number): number {
+  return Math.max(0, BATCH_LINGER_MS - (now - oldestQueuedAt));
+}
+
 function clearLingerTimer(lane: string): void {
   const t = timers.get(lane);
   if (t !== undefined) clearTimeout(t);
@@ -251,7 +266,19 @@ function flush(lane: string): void {
   const take = queue.splice(0, planned.length);
   lanes.set(lane, queue);
   if (queue.length > 0 && !timers.has(lane)) {
-    timers.set(lane, setTimeout(() => flush(lane), BATCH_LINGER_MS));
+    // 🔴 The leftovers get what is *left* of their own window, not a fresh one.
+    //
+    // This used to re-arm at the full BATCH_LINGER_MS, which quietly broke the
+    // promise made at the top of this file — "BATCH_LINGER_MS from the moment it
+    // was queued". A page denied a seat by the crop cap started its wait over,
+    // and on a dense gallery that is the common case, not a corner: measured at
+    // `lingered=3011ms` against a 1500 ms window, twice the documented exposure.
+    //
+    // Worse, it waited for company it had already been refused. `planBatch` had
+    // just decided this page cannot ride with the one in front of it; another
+    // window changes nothing about that, it only delays the page.
+    const oldest = Math.min(...queue.map((w) => w.queuedAt));
+    timers.set(lane, setTimeout(() => flush(lane), remainingLinger(oldest, Date.now())));
   }
   void dispatch(lane, take);
 }

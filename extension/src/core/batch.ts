@@ -38,10 +38,35 @@ export const MAX_PAGES_PER_REQUEST = 3;
 /**
  * Crops per request, across all pages in it.
  *
- * Detection returned 0-9 blocks per page on the measured galleries, so three
- * pages is typically 6-15 crops. Twenty-four leaves room for a dense page
- * without letting one enormous page plus two normal ones become an outlier
- * request.
+ * Twenty-four leaves room for a dense page without letting one enormous page
+ * plus two normal ones become an outlier request.
+ *
+ * ## Why requests carry two pages and not three, and why that is fine
+ *
+ * The original note here said "detection returned 0-9 blocks per page on the
+ * measured galleries, so three pages is typically 6-15 crops". Measured since on
+ * a text-dense gallery, pages run **3-23 crops**, so that sample was of thin
+ * pages and the sentence built on it no longer holds. Two dense pages exhaust
+ * this cap on their own:
+ *
+ *     request done: 2 page(s), 23 crops   <- at the cap
+ *     request done: 1 page(s), 15 crops   <- a companion would need <= 9
+ *     request done: 2 page(s), 22 crops   <- at the cap
+ *
+ * So on a dense gallery it is *this* that limits a batch to two pages, not the
+ * collection window, and the fix for that is not to raise this number. Raising
+ * it trades a bigger payload, a longer upload inside an already 2.8-50 s round
+ * trip, more chance of the model losing track of which crop belongs to which
+ * page, and a wider blast radius when one page poisons a batch — all to save
+ * requests, which measurement says are not scarce right now (`backoff=0`, our
+ * own pacing about 2 s).
+ *
+ * Two pages per request already halves the request count, which is the whole
+ * benefit batching offers (see the header of background/read-batcher.ts: it buys
+ * requests per page, not throughput). Three would be worth revisiting only when
+ * the per-minute allowance is what binds, and then the honest change is to raise
+ * this deliberately with the payload cost understood, not to discover it as a
+ * side effect of a window.
  */
 export const MAX_CROPS_PER_REQUEST = 24;
 
