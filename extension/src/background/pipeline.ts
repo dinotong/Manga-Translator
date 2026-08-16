@@ -1,5 +1,12 @@
 import { getOcr, getTranslations, putOcr, putTranslations, evictIfNeeded } from '../cache/stores';
-import { ocrKey, type OcrBlockRecord, translationKey } from '../cache/db';
+import {
+  blocksFor,
+  OCR_RECORD_FORMAT,
+  ocrKey,
+  type OcrBlockRecord,
+  servesGrouping,
+  translationKey,
+} from '../cache/db';
 import { planMerges } from '../core/merge-proposals';
 import type { RoutedGroup } from '../core/batch';
 import { readPageBatched } from './read-batcher';
@@ -41,14 +48,15 @@ export async function runJob(
 ): Promise<JobOutcome> {
   const from = settings.lang.source;
   const to = settings.lang.target;
+  // Opt-in. See shared/settings.ts for what it cost when it was not.
+  const grouping = settings.translation.modelGrouping;
 
   const gemini = await KeyRing.create(
     settings,
     {
       from,
       to,
-      // Opt-in. See shared/settings.ts for what it cost when it was not.
-      grouping: settings.translation.modelGrouping,
+      grouping,
       ...(source.setKey && settings.translation.contextBubbles > 0
         ? { context: (recentContext.get(source.setKey) ?? []).slice(-settings.translation.contextBubbles) }
         : {}),
@@ -76,10 +84,18 @@ export async function runJob(
   const detectorId = 'ppocr-v4-det@1';
   const key = ocrKey(detectorId, gemini.recognizerId, from, acquired.hash);
 
-  const cached = !source.force ? await getOcr(key) : undefined;
+  const stored = !source.force ? await getOcr(key) : undefined;
+  // A reader who turns grouping off must see it turn off on the pages they have
+  // already read, without knowing that a cache exists. Records written since
+  // `parts` can simply have the merge dropped; older ones cannot be un-merged,
+  // so they are refused here and this one page is read again.
+  const cached = stored && servesGrouping(stored, grouping) ? stored : undefined;
+  if (stored && !cached) {
+    log.info(`ocr record predates un-mergeable grouping, re-reading ${acquired.hash}`);
+  }
   if (cached) {
     log.debug(`ocr hit ${acquired.hash}`);
-    const blocks = await translateCached(cached.blocks, gemini, settings, signal);
+    const blocks = await translateCached(blocksFor(cached.blocks, grouping), gemini, settings, signal);
     remember(source.setKey, blocks, settings.translation.contextBubbles);
     return {
       hash: acquired.hash,
@@ -210,17 +226,39 @@ export async function runJob(
 
     if (owner) {
       const claim = proposed[owner.proposal];
-      const parts = owner.members.map((m) => items[m]);
+      const read = owner.members.map((m) => items[m]);
       // The joined fallback covers a model that names a group but gives it no
       // text: the fragments it did return are in reading order and are better
       // than nothing.
-      const src = (claim?.src ?? '').trim() || parts.map((p) => p?.src ?? '').join('');
-      const out = (claim?.out ?? '').trim() || parts.map((p) => p?.out ?? '').join('');
+      const src = (claim?.src ?? '').trim() || read.map((p) => p?.src ?? '').join('');
+      const out = (claim?.out ?? '').trim() || read.map((p) => p?.out ?? '').join('');
       if (!src && !out) return;
 
       const score = owner.members.reduce((n, m) => n + (detect.blocks[m]?.score ?? 0), 0) /
         owner.members.length;
-      records.push({ rect: owner.rect, src, direction: b.direction, score });
+      // The members are kept on the record, and their own readings are cached
+      // like any other. Between them, switching grouping off later costs
+      // nothing at all: the merge is dropped here and every block underneath it
+      // already has a translation. See cache/db.ts.
+      const parts: OcrBlockRecord[] = [];
+      owner.members.forEach((m, n) => {
+        const block = detect.blocks[m];
+        const item = read[n];
+        if (!block || !item) return;
+        const partSrc = item.src.trim();
+        const partOut = item.out.trim();
+        if (!partSrc && !partOut) return;
+        parts.push({ rect: block.rect, src: partSrc, direction: block.direction, score: block.score });
+        if (partSrc && partOut) pairs.push({ src: partSrc, out: partOut });
+      });
+
+      records.push({
+        rect: owner.rect,
+        src,
+        direction: b.direction,
+        score,
+        ...(parts.length > 0 ? { parts } : {}),
+      });
       blocks.push({ rect: owner.rect, text: out || src, source: src, direction: b.direction });
       if (src && out) pairs.push({ src, out });
       return;
@@ -248,12 +286,18 @@ export async function runJob(
   // deterministic, and without this the same page could group one way now and
   // another way on the next read, which would make any bug in this area
   // impossible to reproduce and therefore impossible to fix.
+  //
+  // Reproducible is not the same as permanent, though, and the first version of
+  // this wrote the merge in as if it were. Each merged record now carries the
+  // blocks it was made of, so the reader can still take the merge back off
+  // without re-reading the page. See cache/db.ts.
   await putOcr({
     key,
     imageHash: acquired.hash,
     from,
     natural: detect.natural,
     blocks: records,
+    format: OCR_RECORD_FORMAT,
   });
 
   await putTranslations(
