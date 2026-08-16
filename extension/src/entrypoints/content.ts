@@ -14,6 +14,7 @@ import {
   type PrefetchGate,
   type PrefetchRefusal,
   prefetchRefusal,
+  readAheadLead,
 } from '../core/prefetch';
 import { clampInFlight, compareWork, type WorkKind } from '../core/scheduling';
 import { MAX_PAGES_PER_REQUEST } from '../core/batch';
@@ -271,7 +272,13 @@ export default defineContentScript({
 
     /** Attach an element to work that is already in flight. */
     function adopt(job: Job, img: HTMLImageElement): void {
-      if (job.speculative) log.debug(`adopted prefetch of page ${job.page} — the reader arrived`);
+      if (job.speculative) {
+        // The reader caught up with a guess that had not finished — which is the
+        // owner's complaint, one instance at a time. Counting it says how often
+        // the lead ran out, without needing them to describe it.
+        prefetchStats.adopted++;
+        log.debug(`adopted prefetch of page ${job.page} — the reader arrived`);
+      }
       // No longer a guess: someone is looking at it. That also frees the single
       // speculative slot for the next page ahead.
       job.speculative = false;
@@ -442,30 +449,72 @@ export default defineContentScript({
     let prefetchSet: string | null = null;
 
     /**
-     * Why prefetch is not starting, counted rather than guessed at.
+     * What prefetch is actually doing, counted rather than guessed at.
      *
      * The reader's report is always the same sentence — "it is only a few pages
      * ahead" — and it has seven possible causes with opposite fixes. Twice now
      * that has been answered by reading the gate and reasoning, and twice the
-     * reasoning was wrong; the tick runs four times a second, so a tally costs
-     * nothing and settles it from one real read.
+     * reasoning was wrong, so the tick counts instead. The tick runs four times a
+     * second; a tally costs nothing and settles it from one real read.
      *
-     * Logged at most every LOG_REFUSALS_MS, and only while the reader is
-     * plainly still reading, so a backgrounded tab does not fill the console.
+     * Three things this deliberately does that the first version did not, each
+     * because the first version could not have answered the question it was
+     * built for:
+     *
+     *   - **The counts are cumulative over the gallery.** They used to be
+     *     cleared on every tick that was *allowed*, so what got printed was
+     *     "refusals since the last successful start" — a number that says
+     *     nothing about which clause dominates a read, and that is smallest
+     *     exactly when prefetch is working. Which clause binds is a question
+     *     about the whole read.
+     *
+     *   - **It logs whether or not the last tick refused.** A refusal-only log
+     *     is silent in the one case that matters most: prefetch permitted,
+     *     running steadily, and still losing ground to the reader. That is the
+     *     throughput story, and the old instrumentation would have shown a
+     *     nearly empty console while it happened.
+     *
+     *   - **It reports the lead** (core/prefetch.ts), which is the reader's
+     *     complaint as a number. Everything else here describes an input to the
+     *     decision; only this describes what the reader gets.
+     *
+     * All of it at `info`. `log.debug` is `console.debug`, which DevTools files
+     * under Verbose and hides by default, so the existing per-page prefetch
+     * lines are invisible unless someone knows to go and turn them on — not a
+     * reasonable thing to depend on when the browser time is the scarce
+     * resource.
      */
     const prefetchRefusals = new Map<PrefetchRefusal, number>();
-    let refusalsLoggedAt = 0;
-    const LOG_REFUSALS_MS = 15_000;
+    /** Failures by error code. A wrong URL and a refused CDN are not the same problem. */
+    const prefetchFailures = new Map<string, number>();
+    /** Pages whose translation we already hold, for `readAheadLead`. */
+    const prefetchReady = new Set<number>();
+    const prefetchStats = { ticks: 0, allowed: 0, started: 0, adopted: 0 };
+    let heartbeatAt = 0;
+    const HEARTBEAT_MS = 15_000;
 
-    function noteRefusal(reason: PrefetchRefusal, gate: PrefetchGate): void {
-      prefetchRefusals.set(reason, (prefetchRefusals.get(reason) ?? 0) + 1);
-      if (reason === 'hidden' || reason === 'disabled' || reason === 'no-lookahead') return;
+    function prefetchHeartbeat(gate: PrefetchGate, currentPage: number | null): void {
       const now = Date.now();
-      if (refusalsLoggedAt !== 0 && now - refusalsLoggedAt < LOG_REFUSALS_MS) return;
-      refusalsLoggedAt = now;
-      const tally = [...prefetchRefusals].map(([k, n]) => `${k}=${n}`).join(' ');
+      if (heartbeatAt !== 0 && now - heartbeatAt < HEARTBEAT_MS) return;
+      heartbeatAt = now;
+      // A backgrounded tab is not reading and must not fill the console; a site
+      // that is switched off has nothing to say either.
+      if (!gate.enabled || !gate.visible) return;
+      const refused =
+        [...prefetchRefusals]
+          .sort((a, b) => b[1] - a[1])
+          .map(([k, n]) => `${k}=${n}`)
+          .join(' ') || 'none';
+      const failed = [...prefetchFailures].map(([k, n]) => `${k}=${n}`).join(' ') || 'none';
+      const budget = clampInFlight(settings.performance.maxConcurrentRequests);
       log.info(
-        `prefetch held back: ${tally} · lookahead=${gate.lookahead} inFlight=${gate.inFlight}/${gate.batchSize ?? 1} misses=${gate.consecutiveMisses}`,
+        `prefetch · lead=${readAheadLead(currentPage, prefetchReady)} at page ${currentPage ?? '?'}` +
+          ` · started=${prefetchStats.started} ready=${prefetchReady.size}` +
+          ` adopted=${prefetchStats.adopted} failed{${failed}}` +
+          ` misses=${prefetchMisses}/${MAX_CONSECUTIVE_MISSES}` +
+          ` · allowed=${prefetchStats.allowed}/${prefetchStats.ticks} refused{${refused}}` +
+          ` · lookahead=${gate.lookahead} speculative=${gate.inFlight}/${gate.batchSize ?? 1}` +
+          ` jobs=${running}/${budget} queued=${queue.length}`,
       );
     }
 
@@ -534,6 +583,15 @@ export default defineContentScript({
         prefetchSet = setKey;
         prefetchCovered.clear();
         prefetchMisses = 0;
+        // The counters describe one gallery's read. Carrying them across would
+        // mix two books' numbering into one lead figure and one refusal tally.
+        prefetchReady.clear();
+        prefetchRefusals.clear();
+        prefetchFailures.clear();
+        prefetchStats.ticks = 0;
+        prefetchStats.allowed = 0;
+        prefetchStats.started = 0;
+        prefetchStats.adopted = 0;
       }
 
       // One gate, both ways of naming a page. Whether the URL was read off the
@@ -557,12 +615,14 @@ export default defineContentScript({
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
       };
+      prefetchStats.ticks++;
       const refusal = prefetchRefusal(gate);
-      if (refusal) {
-        noteRefusal(refusal, gate);
-        return;
-      }
-      prefetchRefusals.clear();
+      if (refusal) prefetchRefusals.set(refusal, (prefetchRefusals.get(refusal) ?? 0) + 1);
+      else prefetchStats.allowed++;
+      // Before the early return, so the one case the old log could not see —
+      // permitted, running, and still falling behind — is the case it reports.
+      prefetchHeartbeat(gate, profile.pageNumber?.(url) ?? null);
+      if (refusal) return;
 
       const target = fromPublished(cfg, gate) ?? fromPattern(cfg, url, gate);
       if (!target) return;
@@ -588,6 +648,7 @@ export default defineContentScript({
       };
       active.set(job.id, job);
       byKey.set(target.url, job);
+      prefetchStats.started++;
       log.debug(`prefetch page ${target.page} (${target.guessed ? 'guessed' : 'published'})`);
       send({
         t: 'RUN',
@@ -716,6 +777,10 @@ export default defineContentScript({
         hashOfUrl.set(job.key, msg.hash);
         // The guessed URL was a real image, so the pattern holds for this book.
         if (job.speculative && job.guessed) prefetchMisses = 0;
+        // Every page this job was started for is now one the reader can turn to
+        // without waiting — including one they have already caught up with,
+        // which `job.speculative` no longer reports because `adopt` cleared it.
+        if (job.page !== null) prefetchReady.add(job.page);
 
         const stale: HTMLImageElement[] = [];
         for (const img of job.imgs) {
@@ -739,6 +804,15 @@ export default defineContentScript({
         settle(job);
         for (const img of stale) enqueue(img); // catch up with whatever is showing
         return;
+      }
+
+      // Counted for anything the prefetcher started, whether or not the reader
+      // has since arrived on it. The code matters: a URL the pattern got wrong
+      // and a CDN that refused a burst both surface as a failed guess and both
+      // end the gallery's prefetching after two, but only one of them is a bug
+      // in the guessing.
+      if (job.page !== null) {
+        prefetchFailures.set(msg.code, (prefetchFailures.get(msg.code) ?? 0) + 1);
       }
 
       if (job.imgs.size > 0) {

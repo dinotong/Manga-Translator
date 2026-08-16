@@ -10,6 +10,7 @@ import {
   pickPrefetch,
   prefetchAllowed,
   prefetchRefusal,
+  readAheadLead,
   type PrefetchInput,
   type PublishedInput,
   type PublishedPage,
@@ -433,5 +434,32 @@ describe('prefetchRefusal', () => {
     expect(
       prefetchRefusal({ ...ok, enabled: false, lookahead: 0, inFlight: 9, foregroundWaiting: true }),
     ).toBe('disabled');
+  });
+});
+
+describe('readAheadLead', () => {
+  it('counts pages the reader could turn to without waiting', () => {
+    expect(readAheadLead(5, new Set([6, 7, 8]))).toBe(3);
+  });
+
+  it('stops at the first gap, because that is where the reader stops', () => {
+    // Three pages are ready, but page 7 is not, so the very next turn after 6
+    // waits. Counting the set would call this a lead of 3 and be wrong about
+    // the only thing the number is for.
+    expect(readAheadLead(5, new Set([6, 8, 9]))).toBe(1);
+  });
+
+  it('is zero when the next page is not ready, however much else is', () => {
+    expect(readAheadLead(5, new Set([7, 8, 9, 10]))).toBe(0);
+  });
+
+  it('is zero when the site does not tell us which page we are on', () => {
+    expect(readAheadLead(null, new Set([1, 2, 3]))).toBe(0);
+    expect(readAheadLead(Number.NaN, new Set([1, 2, 3]))).toBe(0);
+  });
+
+  it('terminates on a page number the set can never reach', () => {
+    expect(readAheadLead(1.5, new Set([2, 3]))).toBe(0);
+    expect(readAheadLead(5, new Set())).toBe(0);
   });
 });

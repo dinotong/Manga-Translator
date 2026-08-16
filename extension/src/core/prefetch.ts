@@ -253,6 +253,35 @@ export function pickPrefetch(input: PrefetchInput): number | null {
 }
 
 /**
+ * How many pages the reader could turn to right now without waiting.
+ *
+ * This is the owner's complaint expressed as a number. "It is only three or four
+ * pages ahead" is not a statement about the gate, the lookahead, or the queue —
+ * it is a statement about how far the *finished* work extends past the page in
+ * front of them, and nothing in this codebase measured that. Every counter we
+ * had described an input to the decision; none described the outcome the reader
+ * actually experiences.
+ *
+ * Consecutive from the current page, deliberately. A reader who has pages 5, 6
+ * and 9 ready is three pages ahead by any count of the set, and one page ahead
+ * by the only measure that matters: they wait at page 7 either way. The gap is
+ * the lead.
+ *
+ * It is also what separates the two surviving explanations without any argument
+ * about the gate. If speculation is being throttled off, the lead collapses to
+ * zero and stays there. If throughput is the binder, the lead decays gradually
+ * from wherever it started as the reader outpaces the pipeline. Those two shapes
+ * do not look alike in a log.
+ */
+export function readAheadLead(currentPage: number | null, ready: ReadonlySet<number>): number {
+  if (currentPage === null || !Number.isInteger(currentPage)) return 0;
+  let lead = 0;
+  // Bounded by the set: a page can only be ready if it is in there.
+  while (lead < ready.size && ready.has(currentPage + lead + 1)) lead++;
+  return lead;
+}
+
+/**
  * A page whose real image URL the site has already put into its own DOM.
  *
  * Produced by a site profile, which is the only place that may know how a
