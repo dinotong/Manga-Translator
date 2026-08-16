@@ -60,6 +60,28 @@
 export const MIN_PREFETCH_GAP_MS = 500;
 
 /**
+ * How often the prefetch scheduler asks whether anything may start yet.
+ *
+ * Here rather than in the content script because it is half of how fast
+ * speculative pages can possibly arrive anywhere downstream: a start is only
+ * considered on a tick, so the real gap between two speculative jobs is
+ * `MIN_PREFETCH_GAP_MS` rounded up to the next tick. `background/read-batcher.ts`
+ * sizes its collection window from both numbers, and that only stays true if
+ * they are stated once.
+ */
+export const PREFETCH_TICK_MS = 250;
+
+/**
+ * The longest gap between two speculative pages entering the pipeline.
+ *
+ * The gap rule is checked on a tick, so a start refused for being 40 ms early
+ * waits a whole further tick. Anything downstream that wants to gather several
+ * speculative pages has to be at least this patient per page or it will always
+ * leave with fewer than it planned for.
+ */
+export const SPECULATIVE_ARRIVAL_GAP_MS = MIN_PREFETCH_GAP_MS + PREFETCH_TICK_MS;
+
+/**
  * The deepest lookahead the reader may ask for.
  *
  * Raised from 10 because "read the whole chapter ahead" is a thing the owner

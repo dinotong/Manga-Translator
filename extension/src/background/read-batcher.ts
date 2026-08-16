@@ -4,6 +4,7 @@ import {
   planBatch,
   type RoutedGroup,
 } from '../core/batch';
+import { SPECULATIVE_ARRIVAL_GAP_MS } from '../core/prefetch';
 import { PipelineError } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import type { KeyRing } from '../translation/KeyRing';
@@ -19,9 +20,25 @@ const log = makeLog('batch');
  * Measured on a real long-strip read: 2.5 requests per minute delivering 2.0
  * translated images per minute, against a free-tier allowance of 15 requests per
  * key per minute. The request budget was never the constraint — the round trip
- * was, at a mean of 18 s. Carrying three pages per request triples the images
- * without spending any more of the per-minute budget, which makes it the only
- * lever here that works *under* the ceiling rather than against it.
+ * was, at a mean of 18 s.
+ *
+ * ## What batching is and is not worth, stated carefully
+ *
+ * This file used to claim that three pages per request "triples the images".
+ * That was true when work was serialised and one job meant one request. It is
+ * not true now and the sentence has misled a reader of these logs already.
+ *
+ * Concurrency is capped in **pages**, not requests (`speculativeAllowance`,
+ * core/scheduling.ts). Pages complete at *pages in flight ÷ round trip*, and
+ * repacking the same pages into fewer requests does not change either term. What
+ * batching actually buys is **requests per page**, and therefore how high the
+ * page ceiling can go before the free tier's per-minute allowance is the thing
+ * that binds. Seven pages one-per-request is seven requests; the same seven
+ * packed three-up is between two and three, and that difference is what makes a
+ * *higher* page ceiling affordable.
+ *
+ * So batching is not the throughput lever. It is what keeps the throughput lever
+ * usable, and it must be working before raising the ceiling is safe.
  *
  * ## The rule that shapes the whole file
  *
@@ -65,14 +82,40 @@ const log = makeLog('batch');
 /**
  * How long a page nobody is looking at yet waits for company.
  *
- * Short on purpose, and bounded from both sides by measurement. Detection takes
- * 126-481 ms per page and is serialised, so consecutive pages of a strip reach
- * this queue roughly half a second apart — below about 500 ms nothing would ever
- * meet anything else. Above it, the cost is slack taken out of the twelve
- * seconds a lookahead page has before the reader arrives. Nothing on the
- * reader's screen is ever behind this timer.
+ * ## Why this is derived rather than chosen
+ *
+ * It was 700 ms, from the right lower bound — detection is serialised at
+ * 126-481 ms a page, so below about 500 ms nothing would ever meet anything
+ * else. But a lower bound is not a size, and measured on a live read the window
+ * expired at a flat `lingered≈705ms` while leaving with **one page**, over and
+ * over:
+ *
+ *     request done: 1 page(s), 1 crops, lingered=713ms wire= 2106ms
+ *     request done: 2 page(s), 2 crops, lingered=707ms wire=26298ms
+ *     request done: 1 page(s), 2 crops, lingered=705ms wire=49517ms
+ *
+ * The number that was missing is what sets the *arrival* rate. Speculative pages
+ * are spaced by `MIN_PREFETCH_GAP_MS` — politeness towards the reader's image
+ * host, and not negotiable — checked on a `PREFETCH_TICK_MS` tick, so they can
+ * arrive no closer than 750 ms apart. A 700 ms window is therefore *just* under
+ * one arrival gap: it reliably catches nothing, occasionally catches one page on
+ * jitter, and can never catch two. Every observation above follows from that.
+ *
+ * So the window is `MAX_PAGES_PER_REQUEST - 1` arrival gaps, which is the least
+ * time in which a full batch can physically assemble. Deriving it means the
+ * three constants cannot drift apart again — change the politeness gap or the
+ * batch size and this follows.
+ *
+ * ## What it costs
+ *
+ * A lookahead page waits up to this long extra. Set against a measured request
+ * of 2.8-50 s and the twelve seconds of lead the IntersectionObserver already
+ * buys, that is noise. Nothing on the reader's screen is ever behind this timer:
+ * `foreground` and `manual` never wait, and a foreground arrival flushes the
+ * lane and takes the waiting pages with it.
  */
-export const BATCH_LINGER_MS = 700;
+export const BATCH_LINGER_MS =
+  (MAX_PAGES_PER_REQUEST - 1) * SPECULATIVE_ARRIVAL_GAP_MS;
 
 /**
  * Why this page is being read, which decides how patient it may be.

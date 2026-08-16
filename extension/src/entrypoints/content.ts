@@ -14,6 +14,7 @@ import {
   type PrefetchGate,
   type PrefetchRefusal,
   prefetchRefusal,
+  PREFETCH_TICK_MS,
   readAheadLead,
 } from '../core/prefetch';
 import {
@@ -36,9 +37,6 @@ import {
 import { loadSettings, type Settings } from '../shared/settings';
 
 const log = makeLog('content');
-
-/** How often the prefetch scheduler is asked whether anything is allowed yet. */
-const PREFETCH_TICK_MS = 250;
 
 /**
  * The page side.
