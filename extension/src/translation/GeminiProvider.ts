@@ -1,3 +1,4 @@
+import { cropId, pageHeader, type ReadItem, routeItems, type Routed } from '../core/batch';
 import { classifyQuotaError } from '../core/quota';
 import { bytesToBase64 } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
@@ -72,16 +73,25 @@ const SAFETY_OFF = [
   'HARM_CATEGORY_DANGEROUS_CONTENT',
 ].map((category) => ({ category, threshold: 'BLOCK_NONE' }));
 
-function buildPrompt(cfg: GeminiConfig): string {
+function buildPrompt(cfg: GeminiConfig, pages = 1): string {
   const src = LANG_NAMES[cfg.from] ?? cfg.from;
   const dst = LANG_NAMES[cfg.to] ?? cfg.to;
 
   return [
     `You are a professional manga translator working ${src} -> ${dst}.`,
-    'Each image is one speech bubble or caption cropped from a single manga page, in reading order.',
+    pages > 1
+      ? // Saying "a single manga page" here would be a lie once several pages
+        // ride in one request, and a believable one: the model would happily
+        // carry a speaker or an honorific from the last bubble of page 2 into
+        // the first bubble of page 3, and the result reads perfectly while being
+        // about the wrong characters. The PAGE markers below are the boundary.
+        `This request contains ${pages} separate manga pages. Each image is one speech bubble or caption. A "--- PAGE" line precedes each page's images; the pages are unrelated to one another and must be translated independently.`
+      : 'Each image is one speech bubble or caption cropped from a single manga page, in reading order.',
     '',
-    'For every image, in order, return:',
-    '  id  - the 1-based index as a string',
+    'For every image, return:',
+    pages > 1
+      ? '  id  - exactly the id given for that image on its PAGE line, e.g. "p2b3"'
+      : `  id  - the id given for that image, e.g. "${cropId(0, 0)}"`,
     `  src - the ${src} text exactly as printed, no corrections`,
     `  out - a natural ${dst} translation`,
     '',
@@ -93,7 +103,10 @@ function buildPrompt(cfg: GeminiConfig): string {
     '- When unsure, stay close to the literal meaning.',
     `- Render sound effects as ${dst} sound effects.`,
     '- If an image has no readable text, return empty strings for src and out.',
-    '- Return exactly one item per image, in the same order.',
+    '- Return exactly one item per image, and always echo its id back verbatim.',
+    pages > 1
+      ? '- Never let dialogue, names or pronouns from one PAGE influence another.'
+      : '',
     cfg.context?.length
       ? `\nEarlier dialogue for continuity:\n${cfg.context.map((c) => `${c.src} -> ${c.out}`).join('\n')}`
       : '',
@@ -119,26 +132,54 @@ export class GeminiProvider {
   }
 
   /**
-   * One request for the whole page.
+   * One request for several whole pages.
    *
-   * The free tier meters requests per day (1,000), not tokens, so nine bubbles
-   * as nine calls would burn nine times the quota. Batching also lets the model
-   * see the page at once, which is what keeps pronouns and tone consistent
-   * between bubbles.
+   * Two levels of batching, for two different reasons. Bubbles are batched
+   * within a page because the free tier meters requests, not tokens, and because
+   * the model seeing the page at once is what keeps pronouns and tone consistent
+   * between bubbles. Pages are batched with each other purely for throughput:
+   * measured, a single-page request costs 1.3-41 s almost independently of its
+   * size, so the second and third page ride along nearly free. See core/batch.ts
+   * for the caps and for why the reply is routed by id rather than by order.
+   */
+  async readPages(
+    pages: readonly (readonly ArrayBuffer[])[],
+    signal?: AbortSignal,
+  ): Promise<Routed> {
+    const cropsPerPage = pages.map((p) => p.length);
+    if (cropsPerPage.every((n) => n === 0)) {
+      return { perPage: cropsPerPage.map(() => []), missed: [] };
+    }
+
+    const parts: unknown[] = [{ text: buildPrompt(this.cfg, pages.length) }];
+    pages.forEach((crops, page) => {
+      if (crops.length === 0) return;
+      if (pages.length > 1) parts.push({ text: pageHeader(page, crops.length, pages.length) });
+      crops.forEach((buf, block) => {
+        // The id travels as a text part immediately before its image. Putting it
+        // in the prompt as a list instead would make the model count, and a
+        // model that miscounts produces ids that look valid and point at the
+        // wrong bubble.
+        parts.push({ text: `id: ${cropId(page, block)}` });
+        parts.push({ inline_data: { mime_type: 'image/webp', data: bytesToBase64(buf) } });
+      });
+    });
+
+    return routeItems(cropsPerPage, await this.call(parts, signal));
+  }
+
+  /**
+   * One page, as the rest of the code has always asked for it.
+   *
+   * Kept as its own entry point because the per-block refusal retry below needs
+   * to send exactly one crop and get exactly one answer, and because a lone page
+   * is still the common case for anything the reader is looking at right now.
    */
   async readPage(crops: readonly ArrayBuffer[], signal?: AbortSignal): Promise<ReadResult[]> {
     if (crops.length === 0) return [];
-
-    const parts: unknown[] = [
-      { text: buildPrompt(this.cfg) },
-      ...crops.map((buf) => ({
-        inline_data: { mime_type: 'image/webp', data: bytesToBase64(buf) },
-      })),
-    ];
-
-    const items = await this.call(parts, signal);
+    const { perPage } = await this.readPages([crops], signal);
     // Pad rather than throw on a short reply: nine good bubbles beat none.
-    return crops.map((_, i) => ({ src: items[i]?.src ?? '', out: items[i]?.out ?? '' }));
+    return crops.map((_, i) => perPage[0]?.[i] ?? { src: '', out: '' });
   }
 
   /**
@@ -198,14 +239,17 @@ export class GeminiProvider {
       signal,
     );
 
+    // Positional, and safely so: this path sends one flat list of strings and
+    // gets one flat list back, with no page boundary anywhere to cross.
     const out = texts.map(() => '');
     live.forEach((x, n) => {
-      out[x.i] = items[n]?.out ?? '';
+      const got = items[n]?.out;
+      out[x.i] = typeof got === 'string' ? got : '';
     });
     return out;
   }
 
-  private async call(parts: unknown[], signal?: AbortSignal): Promise<ReadResult[]> {
+  private async call(parts: unknown[], signal?: AbortSignal): Promise<ReadItem[]> {
     let res: Response;
     try {
       res = await fetch(`${ENDPOINT}/${encodeURIComponent(this.cfg.model)}:generateContent`, {
@@ -244,7 +288,7 @@ export class GeminiProvider {
 
     const text = candidate?.content?.parts?.[0]?.text ?? '';
     try {
-      return (JSON.parse(text) as { items?: ReadResult[] }).items ?? [];
+      return (JSON.parse(text) as { items?: ReadItem[] }).items ?? [];
     } catch {
       log.warn('unparsable response', text.slice(0, 200));
       throw new PipelineError('VALIDATION_FAILED', 'Gemini returned unparsable JSON');
