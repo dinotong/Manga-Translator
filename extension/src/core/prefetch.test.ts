@@ -190,25 +190,25 @@ describe('pickPrefetch', () => {
 
   it('lets a batch stage several pages, and not one more', () => {
     // Several pages in flight so their crops can leave in one Gemini request.
-    expect(pickPrefetch(ok({ inFlight: 1, batchSize: 3 }))).toBe(6);
-    expect(pickPrefetch(ok({ inFlight: 2, batchSize: 3 }))).toBe(6);
-    expect(pickPrefetch(ok({ inFlight: 3, batchSize: 3 }))).toBeNull();
+    expect(pickPrefetch(ok({ inFlight: 1, speculativeAllowance: 3 }))).toBe(6);
+    expect(pickPrefetch(ok({ inFlight: 2, speculativeAllowance: 3 }))).toBe(6);
+    expect(pickPrefetch(ok({ inFlight: 3, speculativeAllowance: 3 }))).toBeNull();
   });
 
   it('treats a missing or nonsensical batch size as one at a time', () => {
     expect(pickPrefetch(ok({ inFlight: 1 }))).toBeNull();
-    expect(pickPrefetch(ok({ inFlight: 1, batchSize: 0 }))).toBeNull();
+    expect(pickPrefetch(ok({ inFlight: 1, speculativeAllowance: 0 }))).toBeNull();
   });
 
   it('still refuses to add a guess while the reader is waiting, however deep', () => {
     expect(
-      pickPrefetch(ok({ lookahead: LOOKAHEAD_WHOLE_CHAPTER, batchSize: 3, foregroundWaiting: true })),
+      pickPrefetch(ok({ lookahead: LOOKAHEAD_WHOLE_CHAPTER, speculativeAllowance: 3, foregroundWaiting: true })),
     ).toBeNull();
   });
 
   it('still stops dead when the tab is hidden, however deep', () => {
     expect(
-      pickPrefetch(ok({ lookahead: LOOKAHEAD_WHOLE_CHAPTER, batchSize: 3, visible: false })),
+      pickPrefetch(ok({ lookahead: LOOKAHEAD_WHOLE_CHAPTER, speculativeAllowance: 3, visible: false })),
     ).toBeNull();
   });
 
@@ -216,7 +216,7 @@ describe('pickPrefetch', () => {
     expect(
       pickPrefetch(ok({
         lookahead: LOOKAHEAD_WHOLE_CHAPTER,
-        batchSize: 3,
+        speculativeAllowance: 3,
         lastStartAt: 100_000 - (MIN_PREFETCH_GAP_MS - 1),
       })),
     ).toBeNull();
@@ -248,7 +248,7 @@ describe('prefetchAllowed', () => {
       { enabled: false },
       { visible: false },
       { lookahead: 0 },
-      { inFlight: 3, batchSize: 3 },
+      { inFlight: 3, speculativeAllowance: 3 },
       { foregroundWaiting: true },
       { consecutiveMisses: 5 },
       { lastStartAt: 100_000 },
@@ -392,7 +392,7 @@ describe('prefetchRefusal', () => {
     visible: true,
     foregroundWaiting: false,
     inFlight: 0,
-    batchSize: 3,
+    speculativeAllowance: 3,
     consecutiveMisses: 0,
     lastStartAt: 0,
   };

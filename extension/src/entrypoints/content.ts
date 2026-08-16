@@ -16,8 +16,12 @@ import {
   prefetchRefusal,
   readAheadLead,
 } from '../core/prefetch';
-import { clampInFlight, compareWork, type WorkKind } from '../core/scheduling';
-import { MAX_PAGES_PER_REQUEST } from '../core/batch';
+import {
+  clampInFlight,
+  compareWork,
+  speculativeAllowance,
+  type WorkKind,
+} from '../core/scheduling';
 import { isAutoOn, siteKey } from '../core/site-scope';
 import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
@@ -554,7 +558,7 @@ export default defineContentScript({
           ` adopted=${prefetchStats.adopted} failed{${failed}}` +
           ` misses=${prefetchMisses}/${MAX_CONSECUTIVE_MISSES}` +
           ` · allowed=${prefetchStats.allowed}/${prefetchStats.ticks} refused{${refused}}` +
-          ` · lookahead=${gate.lookahead} speculative=${gate.inFlight}/${gate.batchSize ?? 1}` +
+          ` · lookahead=${gate.lookahead} speculative=${gate.inFlight}/${gate.speculativeAllowance ?? 1}` +
           ` jobs=${running}/${budget} queued=${queue.length}`,
       );
     }
@@ -634,11 +638,14 @@ export default defineContentScript({
         visible: document.visibilityState === 'visible',
         foregroundWaiting: queue.length > 0,
         inFlight: speculativeInFlight(),
-        // Several pages may be *prepared* at once so their crops leave in one
-        // Gemini request. Not a second rate knob — the gap between starts and
-        // the "nothing while hidden" rule are untouched, and the number of
-        // outbound requests goes down rather than up. See core/batch.ts.
-        batchSize: MAX_PAGES_PER_REQUEST,
+        // The same expression the worker admits speculative jobs by, so the two
+        // cannot refuse at different numbers. This used to be
+        // MAX_PAGES_PER_REQUEST — the batch size, which says nothing about how
+        // much concurrency is free. See speculativeAllowance in
+        // core/scheduling.ts for what that cost.
+        speculativeAllowance: speculativeAllowance(
+          clampInFlight(settings.performance.maxConcurrentRequests),
+        ),
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
       };
@@ -863,6 +870,17 @@ export default defineContentScript({
       // in the guessing.
       if (job.page !== null) {
         prefetchFailures.set(msg.code, (prefetchFailures.get(msg.code) ?? 0) + 1);
+        // A page with no dialogue is not a failure the reader can perceive:
+        // there is nothing to translate and nothing to wait for, so arriving on
+        // it costs them no time at all. Counting it as unready made `lead` stop
+        // dead at the first wordless page and report 0 while the reader could
+        // in fact turn through several — the metric would have understated
+        // exactly the thing it exists to measure.
+        //
+        // It is deliberately not counted against MAX_CONSECUTIVE_MISSES either:
+        // only ACQUIRE_FAILED means the guessed URL was wrong, and a page that
+        // downloaded fine and simply has no text proves the pattern *holds*.
+        if (msg.code === 'NO_TEXT_FOUND') prefetchReady.add(job.page);
       }
 
       if (job.imgs.size > 0) {

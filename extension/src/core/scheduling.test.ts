@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_IN_FLIGHT,
   MAX_IN_FLIGHT_CEILING,
   nextToRun,
+  speculativeAllowance,
   NOTHING_RUNNING,
   type Running,
   total,
@@ -139,3 +140,41 @@ describe('nextToRun', () => {
     }
   });
 });
+
+describe('speculativeAllowance', () => {
+  it('is the budget less the slot D-032 withholds', () => {
+    expect(speculativeAllowance(8)).toBe(7);
+    expect(speculativeAllowance(4)).toBe(3);
+  });
+
+  it('is zero when there is only one slot, because there is nothing to reserve', () => {
+    // Admitting a guess here would mean the reader's own page waits behind it,
+    // which is the one thing the reserve exists to prevent.
+    expect(speculativeAllowance(1)).toBe(0);
+    expect(canAdmit('speculative', NOTHING_RUNNING, 1)).toBe(false);
+  });
+
+  it('agrees exactly with what canAdmit will admit', () => {
+    // The content script refuses at this number and the worker admits by it.
+    // They drifting apart is the bug this function exists to make impossible.
+    for (const cap of [1, 2, 4, 8, 12]) {
+      const allowance = speculativeAllowance(cap);
+      const running = { manual: 0, foreground: 0, speculative: allowance };
+      expect(canAdmit('speculative', running, cap)).toBe(false);
+      if (allowance > 0) {
+        const just = { manual: 0, foreground: 0, speculative: allowance - 1 };
+        expect(canAdmit('speculative', just, cap)).toBe(true);
+      }
+    }
+  });
+
+  it('still leaves the reader a slot when speculation is at its allowance', () => {
+    // The property, stated as a test rather than as a comment: whatever
+    // speculation is doing, a page the reader can see can start immediately.
+    for (const cap of [2, 4, 8, 12]) {
+      const saturated = { manual: 0, foreground: 0, speculative: speculativeAllowance(cap) };
+      expect(canAdmit('foreground', saturated, cap)).toBe(true);
+      expect(canAdmit('manual', saturated, cap)).toBe(true);
+    }
+  });
+})

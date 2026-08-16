@@ -5,6 +5,7 @@ import {
   DEFAULT_CACHE_PAGES,
   MIN_CACHE_PAGES,
 } from '../core/cache-budget';
+import { DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
 import { DEFAULT_SETTINGS, hydrate } from './settings';
 
 /**
@@ -18,7 +19,7 @@ describe('hydrate — v1 to v2 key migration', () => {
       version: 1,
       translation: { gemini: { apiKey: 'AIza-real-key', model: 'gemini-flash-lite-latest' } },
     });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys).toHaveLength(1);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-real-key');
     expect(s.translation.gemini.model).toBe('gemini-flash-lite-latest');
@@ -93,7 +94,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 
   it('handles storage that is empty or garbage', () => {
     expect(hydrate(undefined).translation.gemini.keys).toEqual([]);
-    expect(hydrate(null).version).toBe(6);
+    expect(hydrate(null).version).toBe(7);
     expect(hydrate({ translation: { gemini: { keys: 'nope' } } }).translation.gemini.keys).toEqual([]);
   });
 });
@@ -107,7 +108,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => {
   it('keeps the sites auto-translate was aimed at, for someone who had it on', () => {
     const s = hydrate({ version: 2, autoTranslate: true });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.autoSites).toEqual([...PROFILE_HOSTS]);
     expect(s.autoSites).toContain('imhentai.xxx');
     expect(s.autoSites).toContain('mangadex.org');
@@ -162,7 +163,7 @@ describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => 
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('imhentai.xxx');
   });
@@ -188,7 +189,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       translation: { gemini: { keys: [{ id: 'a', label: 'หลัก', key: 'AIza-real' }] } },
       perSet: { 'imhentai.xxx/1474885': { source: 'ja' } },
     });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['imhentai.xxx', 'mangadex.org']);
     expect(s.perSet['imhentai.xxx/1474885']).toEqual({ source: 'ja' });
@@ -226,7 +227,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('mangadex.org');
     expect(s.cache.maxPages).toBe(DEFAULT_CACHE_PAGES);
@@ -258,7 +259,7 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
       display: { boxOpacity: 0.92, fontScale: 1.1, peekOnHover: false },
       perSet: { 'e-hentai.org/4118730': { source: 'ja' } },
     });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['e-hentai.org', 'nhentai.net']);
     expect(s.cache).toEqual({ maxPages: 60, maxBytes: 100 * 1024 * 1024 });
@@ -296,9 +297,9 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
     expect(hydrate({ version: 5, display: { plateOpacity: 'solid' } }).display.plateOpacity).toBe(1);
   });
 
-  it('takes a v1 all the way to v6', () => {
+  it('takes a v1 all the way to the current version', () => {
     const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
-    expect(s.version).toBe(6);
+    expect(s.version).toBe(7);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
   });
@@ -343,3 +344,32 @@ describe('hydrate — v5 to v6 model grouping becomes opt-in', () => {
     }
   });
 });
+
+describe('hydrate — v6 to v7, a concurrency budget that accounts for batching', () => {
+  it('moves a reader who was on the old default onto the new one', () => {
+    // Nobody chose 4; it was simply what the version they installed shipped
+    // with. Leaving it would repeat the prefetchLookahead mistake, where the
+    // owner read for weeks on a 3 that had stopped being the default.
+    const s = hydrate({ version: 6, performance: { maxConcurrentRequests: 4 } });
+    expect(s.performance.maxConcurrentRequests).toBe(DEFAULT_MAX_IN_FLIGHT);
+  });
+
+  it('leaves a number the reader actually chose alone', () => {
+    const s = hydrate({ version: 6, performance: { maxConcurrentRequests: 2 } });
+    expect(s.performance.maxConcurrentRequests).toBe(2);
+  });
+
+  it('does not touch the budget again on a record already at v7', () => {
+    // Someone who deliberately picks the old default *after* the migration has
+    // said something, and must not be overruled every time settings are read.
+    const s = hydrate({ version: 7, performance: { maxConcurrentRequests: 4 } });
+    expect(s.performance.maxConcurrentRequests).toBe(4);
+  });
+
+  it('carries a v1 through to the new budget along with every other migration', () => {
+    const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
+    expect(s.version).toBe(7);
+    expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
+    expect(s.performance.maxConcurrentRequests).toBe(DEFAULT_MAX_IN_FLIGHT);
+  });
+})

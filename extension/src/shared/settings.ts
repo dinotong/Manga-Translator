@@ -45,7 +45,7 @@ export interface Settings {
    *         `true` written before this version is the old default speaking, not
    *         a reader's decision, and is not worth honouring.
    */
-  version: 6;
+  version: 7;
 
   /**
    * The master kill switch, and the only thing here that is still global.
@@ -223,7 +223,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 6,
+  version: 7,
   enabled: true,
   autoSites: [],
   lang: { source: 'ja', target: 'th' },
@@ -378,6 +378,30 @@ function migrateModelGrouping(version: unknown, stored: unknown): boolean {
   return stored === true;
 }
 
+/**
+ * v6 -> v7: the concurrency budget, recalculated now that jobs are not requests.
+ *
+ * `DEFAULT_MAX_IN_FLIGHT` moved from 4 to 8 because batching made the arithmetic
+ * behind 4 wrong (see core/scheduling.ts). A default alone would not reach
+ * anybody who has ever saved settings, because `hydrate` merges stored values
+ * over defaults and every install has a stored 4 — which is exactly how the
+ * owner ended up reading with `prefetchLookahead: 3` weeks after the default
+ * became 10.
+ *
+ * So the old default is moved, and *only* the old default. A reader who went to
+ * the Options page and deliberately chose some other number has said something,
+ * and is left alone. The one case this cannot distinguish is a reader who chose
+ * 4 on purpose, which costs them a value they can set again in one click, and
+ * which is the same trade every "move the default" migration in this file makes.
+ */
+const V6_DEFAULT_MAX_IN_FLIGHT = 4;
+
+function migrateMaxInFlight(version: unknown, stored: unknown): number | undefined {
+  if (Number(version) >= 7) return stored as number | undefined;
+  if (stored === V6_DEFAULT_MAX_IN_FLIGHT) return DEFAULT_MAX_IN_FLIGHT;
+  return stored as number | undefined;
+}
+
 function isKeyEntry(v: unknown): v is ApiKeyEntry {
   const e = v as ApiKeyEntry | null;
   return (
@@ -399,7 +423,7 @@ export function hydrate(stored: unknown): Settings {
   const next: Settings & { autoTranslate?: unknown; display: Settings['display'] & { boxOpacity?: unknown } } = {
     ...d,
     ...s,
-    version: 6,
+    version: 7,
     // Normalised on read, not only on write: this list decides which sites are
     // allowed to spend the reader's daily quota, so a hand-edited storage entry
     // must not be able to add a site under a spelling the popup cannot show.
@@ -433,7 +457,8 @@ export function hydrate(stored: unknown): Settings {
       // must not be able to raise them.
       prefetchLookahead: clampLookahead(s.performance?.prefetchLookahead ?? d.performance.prefetchLookahead),
       maxConcurrentRequests: clampInFlight(
-        s.performance?.maxConcurrentRequests ?? d.performance.maxConcurrentRequests,
+        migrateMaxInFlight(s.version, s.performance?.maxConcurrentRequests) ??
+          d.performance.maxConcurrentRequests,
       ),
     },
     // v3 -> v4 is just this line: a record saved before the setting existed has

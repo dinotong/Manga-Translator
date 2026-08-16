@@ -43,17 +43,45 @@ export const NOTHING_RUNNING: Running = { manual: 0, foreground: 0, speculative:
 /**
  * Whole jobs in flight at once, across every tab.
  *
- * Four, from the measured shape of a job rather than from taste. At a mean 18 s
- * per request, four in flight is a ceiling of about 13 requests a minute — just
- * under one key's paced allowance of 14 (core/rate-limit.ts), so the common
- * single-key setup saturates its own quota without ever being refused, and a
- * second key raises the useful ceiling rather than sitting idle. Going higher
- * would mostly queue requests behind the rate limiter, where the waiting is
- * invisible and does nothing but hold image bytes in memory.
+ * ## Why this moved from four
+ *
+ * Four was measured, and the measurement was sound when it was taken: "at a mean
+ * 18 s per request, four in flight is about 13 requests a minute — just under
+ * one key's paced allowance of 14 (core/rate-limit.ts)". Every word of that
+ * assumes **one job is one request**.
+ *
+ * Batching made that false. `read-batcher.ts` packs up to `MAX_PAGES_PER_REQUEST`
+ * (3) pages into a single `generateContent` call, and says so itself: "carrying
+ * three pages per request triples the images without spending any more of the
+ * per-minute budget". So four jobs in flight is at most about 1.3 *requests* in
+ * flight — roughly 4.4 a minute against an allowance of 14. The budget was
+ * holding the pipeline to a third of the rate its own justification permitted.
+ *
+ * This is the third time in this project a rule has outlived the thing it was
+ * reasoning about: `foregroundWaiting` after the concurrency split (D-027), and
+ * `onScreen` after long strips (D-035). The number was never wrong; the sentence
+ * underneath it stopped being true.
+ *
+ * ## The arithmetic, redone with batching in it
+ *
+ * N jobs in flight is about N/3 requests in flight, so N/3 × (60/18) ≈ 1.1N
+ * requests a minute. Against `PACED_RPM` of 14 that permits N ≈ 12 before the
+ * limiter is even approached. Eight is chosen below that rather than at it,
+ * because the packing is opportunistic: a page the reader is looking at goes out
+ * alone by design, so the worst case is N requests rather than N/3, and there
+ * the rate limiter paces the excess. Pacing costs waiting; being refused costs
+ * the round trip plus a 30 s penalty, which is the trade rate-limit.ts exists to
+ * make.
+ *
+ * What this buys the reader, which is the point: speculation may hold seven
+ * pages (see `speculativeAllowance`), and seven pages against an 18 s round trip
+ * delivers one about every 2.6 s, against a measured page turn of 3-4 s. Three
+ * pages delivered one every 6 s, so the reader outran the pipeline and a lead
+ * could never accumulate — measured as `lead=0` on a cold gallery.
  */
-export const DEFAULT_MAX_IN_FLIGHT = 4;
+export const DEFAULT_MAX_IN_FLIGHT = 8;
 
-export const MAX_IN_FLIGHT_CEILING = 8;
+export const MAX_IN_FLIGHT_CEILING = 12;
 
 export function clampInFlight(value: unknown): number {
   const n = Math.round(Number(value));
@@ -63,6 +91,34 @@ export function clampInFlight(value: unknown): number {
 
 export function total(running: Running): number {
   return running.manual + running.foreground + running.speculative;
+}
+
+/**
+ * The most speculative jobs that may be in flight when nothing else is running.
+ *
+ * D-032 in one expression: one slot is withheld from speculation, always, so a
+ * page the reader can see never waits for a guess to finish.
+ *
+ * It is exported because the content script has to know the same number *before*
+ * it starts a guess — the prefetch gate in core/prefetch.ts refuses once this
+ * many speculative pages are in flight. That number used to be
+ * `MAX_PAGES_PER_REQUEST` instead, on the reasoning that several pages must be
+ * prepared at once for a batch to form at all. True, but it made the cap on
+ * speculation the *batch size*, which has nothing to do with how much
+ * concurrency is free, and at the old budget of four the two happened to be the
+ * same number — three — so nothing looked wrong. Measured on a live read the gate
+ * refused 35 of 53 ticks on `in-flight` with `speculative=3/3`, and raising the
+ * budget alone would not have moved it, because the content script would have
+ * gone on refusing at three.
+ *
+ * One definition, read by both sides, is what stops those two ceilings drifting
+ * apart again — or coinciding by accident and hiding each other.
+ *
+ * Zero at a budget of one: with a single slot there is nothing to reserve, and
+ * speculation must simply not happen.
+ */
+export function speculativeAllowance(maxInFlight: number): number {
+  return Math.max(0, Math.max(1, maxInFlight) - 1);
 }
 
 /**
@@ -79,7 +135,7 @@ export function canAdmit(kind: WorkKind, running: Running, maxInFlight: number):
   // guesses would let one foreground job plus the full speculative allowance
   // fill every slot, and the next page the reader reached would wait behind a
   // guess after all — which is the exact thing being ruled out.
-  if (kind === 'speculative') return total(running) < cap - 1;
+  if (kind === 'speculative') return total(running) < speculativeAllowance(cap);
   return true;
 }
 

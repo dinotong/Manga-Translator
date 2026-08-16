@@ -173,16 +173,23 @@ export interface PrefetchGate {
   /**
    * How many speculative pages may be in flight at once.
    *
-   * This is *not* a second rate knob. It exists because crops from several pages
-   * now ride in one Gemini request (see core/batch.ts), and a batch cannot form
-   * if only one page is ever being prepared — the reason to allow a second and a
-   * third is precisely so they leave together rather than separately. Requests
-   * to the reader's own site are still spaced by MIN_PREFETCH_GAP_MS, and the
-   * number of outbound Gemini requests goes *down*, not up.
+   * This is *not* a second rate knob. Requests to the reader's own site are
+   * still spaced by MIN_PREFETCH_GAP_MS whatever this says, and because crops
+   * from several pages ride in one Gemini request (core/batch.ts) a larger
+   * number here sends *fewer* outbound requests per page, not more.
    *
-   * Defaults to 1, which is the behaviour this had before batching existed.
+   * It comes from `speculativeAllowance` in core/scheduling.ts — the same
+   * expression the worker admits jobs by — so the content script cannot refuse
+   * at a different number than the worker would. It used to be
+   * `MAX_PAGES_PER_REQUEST`, which is the batch size and says nothing about how
+   * much concurrency is free; at the old budget of four the two were both three,
+   * so the mistake was invisible until a live read showed the gate refusing 35
+   * of 53 ticks here with three pages in flight and a lead of zero.
+   *
+   * Zero is meaningful and means "no speculation at all". Defaults to 1, which
+   * is the behaviour this had before batching existed.
    */
-  batchSize?: number;
+  speculativeAllowance?: number;
   /** Guesses that came back as "no such image", in a row, in this gallery. */
   consecutiveMisses: number;
   /** Timestamp the last speculative request started, or 0. */
@@ -223,7 +230,10 @@ export function prefetchRefusal(gate: PrefetchGate): PrefetchRefusal | null {
   if (!gate.visible) return 'hidden';
   if (gate.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return 'bad-guesses';
   if (gate.foregroundWaiting) return 'foreground-waiting';
-  if (gate.inFlight >= Math.max(1, gate.batchSize ?? 1)) return 'in-flight';
+  // Not floored at 1: an allowance of zero is the worker saying it has no slot
+  // it could spare, and starting a guess it would only queue is worse than not
+  // starting one.
+  if (gate.inFlight >= (gate.speculativeAllowance ?? 1)) return 'in-flight';
   if (gate.now - gate.lastStartAt < MIN_PREFETCH_GAP_MS) return 'too-soon';
   return null;
 }
