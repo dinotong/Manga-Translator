@@ -197,7 +197,13 @@ export class GeminiProvider {
   ): Promise<PagesRead> {
     const cropsPerPage = pages.map((p) => p.length);
     if (cropsPerPage.every((n) => n === 0)) {
-      return { perPage: cropsPerPage.map(() => []), missed: [], groups: cropsPerPage.map(() => []) };
+      return {
+        perPage: cropsPerPage.map(() => []),
+        missed: [],
+        unidentified: 0,
+        positional: false,
+        groups: cropsPerPage.map(() => []),
+      };
     }
 
     const parts: unknown[] = [{ text: buildPrompt(this.cfg, pages.length) }];
@@ -215,8 +221,22 @@ export class GeminiProvider {
     });
 
     const reply = await this.call(parts, signal);
+    const routed = routeItems(cropsPerPage, reply.items);
+    // Loud, because both of these are supposed to be impossible: the schema
+    // makes `id` required and each id is pinned to its image in the request. If
+    // either ever shows up in a real log, the answer to "can we trust position?"
+    // has been measured rather than argued.
+    if (routed.unidentified > 0) {
+      log.warn(
+        `${routed.unidentified}/${reply.items.length} items came back with an id we cannot read` +
+          ` (first: ${JSON.stringify(reply.items.find((i) => typeof i.id !== 'string' || !/^p\d+b\d+$/i.test(i.id.trim()))?.id)})`,
+      );
+    }
+    if (routed.positional) {
+      log.warn('reply carried no ids at all — placed by position, single page only');
+    }
     return {
-      ...routeItems(cropsPerPage, reply.items),
+      ...routed,
       groups: this.cfg.grouping
         ? routeGroups(cropsPerPage, reply.groups)
         : cropsPerPage.map(() => []),

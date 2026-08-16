@@ -125,9 +125,22 @@ export function cropId(page: number, block: number): string {
   return `p${page + 1}b${block + 1}`;
 }
 
+/**
+ * Read an id back, forgiving the ways a model writes the same thing.
+ *
+ * Case and a separator only — `P1B1`, `p1-b1`, `p1 b1` are unmistakably our
+ * scheme wearing a different coat, and rejecting them used to be expensive: an
+ * unparseable id is an *unrouteable* answer, and a page of unrouteable answers
+ * used to fall through to positional routing, which is the failure this file
+ * exists to prevent.
+ *
+ * Deliberately not forgiven: a bare number. `"1"` could be a block index, a page
+ * index or the model counting from zero, and there is no reading of it that is
+ * safe to guess.
+ */
 export function parseCropId(raw: unknown): { page: number; block: number } | null {
   if (typeof raw !== 'string') return null;
-  const m = /^p(\d+)b(\d+)$/.exec(raw.trim());
+  const m = /^p\s*(\d+)\s*[-_ ]?\s*b\s*(\d+)$/i.exec(raw.trim());
   if (!m) return null;
   const page = Number(m[1]) - 1;
   const block = Number(m[2]) - 1;
@@ -150,6 +163,21 @@ export interface Routed {
   perPage: ({ src: string; out: string } | null)[][];
   /** Pages the reply covered not at all — candidates for a solo retry. */
   missed: number[];
+  /**
+   * Items that carried an id we could not read. Non-zero means the reply was
+   * numbered in some scheme of the model's own, which is worth seeing in a log:
+   * the request pins an id to each image and the response schema makes `id`
+   * required, so this should be zero on every reply.
+   */
+  unidentified: number;
+  /**
+   * The reply was placed by position rather than by id.
+   *
+   * Reported so it can be logged rather than inferred. It should be vanishingly
+   * rare against a provider whose schema requires an id, and if it is ever
+   * common the fallback should go, not the logging.
+   */
+  positional: boolean;
 }
 
 /**
@@ -157,11 +185,27 @@ export interface Routed {
  *
  * By id only, across a multi-page batch. Position is accepted as a fallback in
  * exactly one case: a single-page request whose item count matches its crop
- * count. That is the shape every request had before batching existed, it cannot
- * put text on the wrong *page* because there is only one, and dropping the
- * fallback would regress pages the old code read fine when the model omitted
- * ids. With two or more pages in flight there is no safe positional reading, so
- * an unidentifiable item is discarded rather than guessed at.
+ * count, **and in which not one item offered an id of any kind**. That is the
+ * shape every request had before batching existed, it cannot put text on the
+ * wrong *page* because there is only one, and dropping the fallback would
+ * regress a provider that genuinely does not number its answers. With two or
+ * more pages in flight there is no safe positional reading, so an unidentifiable
+ * item is discarded rather than guessed at.
+ *
+ * ## Why "no ids of any kind" and not "no ids we could read"
+ *
+ * The test used to be whether any id *parsed*, which quietly made the two
+ * opposite cases identical: a model that returned no ids at all, and a model
+ * that numbered every item in a scheme of its own. The second is the dangerous
+ * one. Numbering means the model has an opinion about which answer belongs to
+ * which image, and if it also reordered the items — the prompt tells it the
+ * crops arrive in reading order, and it may disagree about what that order is —
+ * then reading the reply by position mirrors every line on the page.
+ *
+ * That is the same failure class as merging two speakers: the reader gets fluent
+ * dialogue in the wrong mouths and no way to notice. A blank page is a worse
+ * *experience* and a far better *failure*, so an unreadable numbering now yields
+ * nothing, and the batcher retries the page alone.
  */
 export function routeItems(
   cropsPerPage: readonly number[],
@@ -172,20 +216,22 @@ export function routeItems(
   const text = (v: unknown): string => (typeof v === 'string' ? v : '');
   let placed = 0;
   /**
-   * Did the model use our id scheme at all?
+   * Did the model try to identify its answers at all?
    *
-   * The positional fallback below is only safe when the answer carries no ids
-   * whatsoever. An id that *is* present but points somewhere impossible —
-   * `p1b5` on a one-crop page — means the model was numbering, and got it
-   * wrong; reading that reply by position would place text the model itself
-   * disclaimed.
+   * Any non-empty id counts, whether or not we can read it — see the header.
+   * A model that numbered its answers has an opinion about which goes where,
+   * and position must not be used to overrule it.
    */
-  let sawId = false;
+  let numbered = false;
+  let unidentified = 0;
 
   for (const item of items) {
     const at = parseCropId(item.id);
-    if (!at) continue;
-    sawId = true;
+    if (typeof item.id === 'string' && item.id.trim() !== '') numbered = true;
+    if (!at) {
+      if (item.id !== undefined && item.id !== null) unidentified++;
+      continue;
+    }
     const page = perPage[at.page];
     if (!page || at.block >= page.length) continue; // an id for a page we did not send
     if (page[at.block] !== null) continue; // duplicate id: the first answer wins
@@ -193,12 +239,14 @@ export function routeItems(
     placed++;
   }
 
-  if (!sawId && placed === 0 && cropsPerPage.length === 1 && items.length === cropsPerPage[0]) {
+  let positional = false;
+  if (!numbered && placed === 0 && cropsPerPage.length === 1 && items.length === cropsPerPage[0]) {
     const only = perPage[0]!;
     items.forEach((item, i) => {
       only[i] = { src: text(item.src), out: text(item.out) };
     });
     placed = items.length;
+    positional = true;
   }
 
   const missed: number[] = [];
@@ -206,7 +254,7 @@ export function routeItems(
     if (page.length > 0 && page.every((slot) => slot === null)) missed.push(i);
   });
 
-  return { perPage, missed };
+  return { perPage, missed, unidentified, positional };
 }
 
 /* ------------------------------------------------------------------ */

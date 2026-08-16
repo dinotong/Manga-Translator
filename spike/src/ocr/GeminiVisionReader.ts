@@ -232,7 +232,20 @@ export class GeminiVisionReader implements TextRecognizer {
     }
 
     const reply = await this.call(parts, signal);
-    const { perPage } = routeItems([crops.length], reply.items);
+    const { perPage, unidentified, positional } = routeItems([crops.length], reply.items);
+    // The harness exists to answer questions like "does the model actually echo
+    // our ids?" with an observation instead of an argument. Both of these should
+    // be silent on every reply: `id` is required by the response schema and each
+    // id is pinned to its image in the request.
+    if (unidentified > 0) {
+      console.warn(
+        `[gemini] ${unidentified}/${reply.items.length} items came back with an unreadable id`,
+        reply.items.map((i) => i.id),
+      );
+    }
+    if (positional) {
+      console.warn('[gemini] reply carried no ids at all — placed by position');
+    }
     return {
       items: perPage[0] ?? crops.map(() => null),
       groups: this.opts.grouping ? (routeGroups([crops.length], reply.groups)[0] ?? []) : [],

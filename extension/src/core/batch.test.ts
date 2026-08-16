@@ -68,6 +68,23 @@ describe('cropId / parseCropId', () => {
     expect(parseCropId(' p2b3 ')).toEqual({ page: 1, block: 2 });
   });
 
+  /**
+   * Worth forgiving, because the cost of not forgiving it is now a blank page
+   * rather than a positional guess: an id we cannot read is an answer we cannot
+   * route, and routing by position instead is the failure this whole file is
+   * built to prevent.
+   */
+  it('accepts the same id in the coats a model puts it in', () => {
+    for (const same of ['P2B3', 'p2-b3', 'p2 b3', 'p2_b3', 'P2 B3']) {
+      expect(parseCropId(same), same).toEqual({ page: 1, block: 2 });
+    }
+  });
+
+  it('still refuses a bare number, which could mean three different things', () => {
+    expect(parseCropId('3')).toBeNull();
+    expect(parseCropId('23')).toBeNull();
+  });
+
   it('rejects p0/b0 rather than reading them as -1', () => {
     expect(parseCropId('p0b1')).toBeNull();
     expect(parseCropId('p1b0')).toBeNull();
@@ -119,7 +136,7 @@ describe('routeItems', () => {
   });
 
   it('still falls back to position for a lone page whose counts match', () => {
-    const { perPage, missed } = routeItems([2], [
+    const { perPage, missed, positional } = routeItems([2], [
       { src: 'a1', out: 'A1' },
       { src: 'a2', out: 'A2' },
     ]);
@@ -128,6 +145,46 @@ describe('routeItems', () => {
       { src: 'a2', out: 'A2' },
     ]);
     expect(missed).toEqual([]);
+    expect(positional).toBe(true);
+  });
+
+  /**
+   * The hole this closes. A model that numbers its answers in a scheme of its
+   * own has an opinion about which answer belongs to which image — and if it
+   * also decided our "reading order" was wrong and reordered the items, reading
+   * the reply by position mirrors the page and puts every line in the wrong
+   * mouth. The old test was "did any id parse", which made that case
+   * indistinguishable from a reply with no ids at all.
+   */
+  it('refuses position when the model numbered its answers its own way', () => {
+    const { perPage, missed, unidentified, positional } = routeItems([2], [
+      { id: '1', src: 'a1', out: 'A1' },
+      { id: '2', src: 'a2', out: 'A2' },
+    ]);
+    expect(perPage[0]).toEqual([null, null]);
+    expect(missed).toEqual([0]);
+    expect(unidentified).toBe(2);
+    expect(positional).toBe(false);
+  });
+
+  it('refuses position when even one item was numbered', () => {
+    const { perPage } = routeItems([2], [
+      { id: 'bubble one', src: 'a1', out: 'A1' },
+      { src: 'a2', out: 'A2' },
+    ]);
+    expect(perPage[0]).toEqual([null, null]);
+  });
+
+  it('does not count an empty id as the model having numbered anything', () => {
+    const { perPage, positional } = routeItems([1], [{ id: '  ', src: 'a', out: 'A' }]);
+    expect(perPage[0]).toEqual([{ src: 'a', out: 'A' }]);
+    expect(positional).toBe(true);
+  });
+
+  it('reports a clean reply as neither unidentified nor positional', () => {
+    const { unidentified, positional } = routeItems([1], [{ id: 'p1b1', src: 'a', out: 'A' }]);
+    expect(unidentified).toBe(0);
+    expect(positional).toBe(false);
   });
 
   it('refuses the positional fallback when a lone page’s counts disagree', () => {
