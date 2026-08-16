@@ -119,9 +119,22 @@ export class Overlay {
     return shadow;
   }
 
+  /**
+   * Adopt new settings and redraw what is already on screen.
+   *
+   * Redrawn, never cleared: everything here is presentation — font size, how
+   * opaque a box is — and a re-translate would spend a request from a 1,000/day
+   * budget to arrive at the same words.
+   *
+   * The snapshot is not tidiness. `attach` deletes the entry and puts it back,
+   * and a Map re-insertion lands *behind* a live iterator, which then reaches it
+   * again and repeats — forever. Measured on a translated page: every settings
+   * write hung the tab's main thread on the spot, with no way back but closing
+   * it, which is why changing one slider appeared to break every open reader.
+   */
   updateSettings(settings: Settings): void {
     this.settings = settings;
-    for (const { hash, target } of this.mounted.values()) this.attach(target, hash);
+    for (const { hash, target } of Array.from(this.mounted.values())) this.attach(target, hash);
   }
 
   /** Cache a finished result under its hash. Does not display it. */
