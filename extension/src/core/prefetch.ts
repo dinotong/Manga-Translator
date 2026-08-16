@@ -79,6 +79,36 @@ export const MAX_LOOKAHEAD = 200;
 /** What the Options page offers as "the whole chapter". */
 export const LOOKAHEAD_WHOLE_CHAPTER = MAX_LOOKAHEAD;
 
+/**
+ * How far ahead a fresh install reads.
+ *
+ * Was 3, and the owner ran into the back of it: on imhentai they kept arriving
+ * at a page that was still translating. The arithmetic says they always would.
+ * A page costs a mean 18 s round trip and three pages ride in one request, so
+ * the pipeline delivers a page roughly every 6 s in the steady state, while a
+ * paged reader turns one every 3-4 s. The reader is about twice as fast as the
+ * translator, so *any* fixed lead is eventually eaten; the only question is how
+ * long the reader gets before it happens. Three pages bought under twenty
+ * seconds.
+ *
+ * Ten, for what it costs when it is wrong. A reader who opens a gallery and
+ * leaves after one page has spent at most three or four extra requests out of
+ * 1,000 a day. Going much deeper starts trading a real resource for pages
+ * nobody looks at, and "translate the whole chapter" stays something the reader
+ * asks for — the Options page offers it in one click.
+ *
+ * It self-limits where it should. Sites that publish a window of upcoming pages
+ * rather than numbering their files (luscious, e-hentai MPV) simply run out of
+ * URLs to prefetch after two or three, so a deeper default costs them nothing
+ * at all; only sites whose URLs can be derived, like imhentai, can use the
+ * depth, and those are exactly the ones where the complaint came from.
+ *
+ * 🟡 Judgement, not a measurement — unlike the geometry constants in this
+ * project there is no fixture that can settle it, only a real read. It is one
+ * number in one place, and the reader can move it either way in Options.
+ */
+export const DEFAULT_LOOKAHEAD = 10;
+
 /** Consecutive failed guesses in one gallery before giving up on it. */
 export const MAX_CONSECUTIVE_MISSES = 2;
 
@@ -168,16 +198,39 @@ export interface PrefetchInput extends PrefetchGate {
   covered: ReadonlySet<number>;
 }
 
+/**
+ * Which rule refused, or null for "go ahead".
+ *
+ * Separate from the boolean because "prefetch is not keeping up" has seven
+ * possible causes here and they call for opposite fixes — one is the reader's
+ * setting, two are the site's own limits, one means the guesses are wrong, and
+ * three are throughput. Told only that it refused, the honest next step is to
+ * guess, and guessing at this has already produced two wrong diagnoses. The
+ * caller logs the tally; see entrypoints/content.ts.
+ */
+export type PrefetchRefusal =
+  | 'disabled'
+  | 'no-lookahead'
+  | 'hidden'
+  | 'bad-guesses'
+  | 'foreground-waiting'
+  | 'in-flight'
+  | 'too-soon';
+
+export function prefetchRefusal(gate: PrefetchGate): PrefetchRefusal | null {
+  if (!gate.enabled) return 'disabled';
+  if (clampLookahead(gate.lookahead) === 0) return 'no-lookahead';
+  if (!gate.visible) return 'hidden';
+  if (gate.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return 'bad-guesses';
+  if (gate.foregroundWaiting) return 'foreground-waiting';
+  if (gate.inFlight >= Math.max(1, gate.batchSize ?? 1)) return 'in-flight';
+  if (gate.now - gate.lastStartAt < MIN_PREFETCH_GAP_MS) return 'too-soon';
+  return null;
+}
+
 /** May *any* speculative request start right now? */
 export function prefetchAllowed(gate: PrefetchGate): boolean {
-  if (!gate.enabled) return false;
-  if (clampLookahead(gate.lookahead) === 0) return false;
-  if (!gate.visible) return false;
-  if (gate.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return false;
-  if (gate.foregroundWaiting) return false;
-  if (gate.inFlight >= Math.max(1, gate.batchSize ?? 1)) return false;
-  if (gate.now - gate.lastStartAt < MIN_PREFETCH_GAP_MS) return false;
-  return true;
+  return prefetchRefusal(gate) === null;
 }
 
 /**

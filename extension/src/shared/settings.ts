@@ -7,7 +7,7 @@ import {
 } from '../core/cache-budget';
 import { clampOpacity } from '../core/panel-shape';
 import { DETECT_POSTPROCESS } from '../core/preprocess';
-import { clampLookahead } from '../core/prefetch';
+import { clampLookahead, DEFAULT_LOOKAHEAD } from '../core/prefetch';
 import { clampInFlight, DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
 import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
@@ -166,7 +166,8 @@ export interface Settings {
      *
      * Capped at MAX_LOOKAHEAD, which is deliberately large enough to express
      * "the whole chapter" — the politeness rules that bound the *rate* live in
-     * core/prefetch.ts and do not read this value at all.
+     * core/prefetch.ts and do not read this value at all. The default and why
+     * it moved are documented there too, on DEFAULT_LOOKAHEAD.
      */
     prefetchLookahead: number;
     /**
@@ -242,7 +243,7 @@ export const DEFAULT_SETTINGS: Settings = {
     peekOnHover: true,
   },
   performance: {
-    prefetchLookahead: 3,
+    prefetchLookahead: DEFAULT_LOOKAHEAD,
     maxConcurrentOcr: 1,
     maxConcurrentRequests: DEFAULT_MAX_IN_FLIGHT,
   },

@@ -9,6 +9,7 @@ import {
   nextPublished,
   pickPrefetch,
   prefetchAllowed,
+  prefetchRefusal,
   type PrefetchInput,
   type PublishedInput,
   type PublishedPage,
@@ -371,5 +372,66 @@ describe('nextPublished', () => {
     // Both sites mount a window, not the whole gallery. Two pages ahead is what
     // was measured, and it is all this may ever ask for in one position.
     expect(picked).toEqual([7, 8]);
+  });
+});
+
+/**
+ * "It is only a few pages ahead" is one sentence with seven possible causes,
+ * and answering it by reading the gate has already produced two wrong
+ * diagnoses. The refusal reason is what turns the next report into a
+ * measurement, so the order it reports in is part of the contract: the cheap
+ * and unambiguous checks come first, and the three throughput clauses last,
+ * because those are the ones that look alike from the reader's side.
+ */
+describe('prefetchRefusal', () => {
+  const ok = {
+    now: 10_000,
+    enabled: true,
+    lookahead: 10,
+    visible: true,
+    foregroundWaiting: false,
+    inFlight: 0,
+    batchSize: 3,
+    consecutiveMisses: 0,
+    lastStartAt: 0,
+  };
+
+  it('says nothing when nothing is in the way', () => {
+    expect(prefetchRefusal(ok)).toBeNull();
+    expect(prefetchAllowed(ok)).toBe(true);
+  });
+
+  it('names each clause', () => {
+    expect(prefetchRefusal({ ...ok, enabled: false })).toBe('disabled');
+    expect(prefetchRefusal({ ...ok, lookahead: 0 })).toBe('no-lookahead');
+    expect(prefetchRefusal({ ...ok, visible: false })).toBe('hidden');
+    expect(prefetchRefusal({ ...ok, consecutiveMisses: MAX_CONSECUTIVE_MISSES })).toBe('bad-guesses');
+    expect(prefetchRefusal({ ...ok, foregroundWaiting: true })).toBe('foreground-waiting');
+    expect(prefetchRefusal({ ...ok, inFlight: 3 })).toBe('in-flight');
+    expect(prefetchRefusal({ ...ok, lastStartAt: 9_900 })).toBe('too-soon');
+  });
+
+  it('is exactly the boolean, so the two cannot disagree', () => {
+    for (const patch of [
+      { enabled: false },
+      { lookahead: 0 },
+      { visible: false },
+      { consecutiveMisses: 5 },
+      { foregroundWaiting: true },
+      { inFlight: 9 },
+      { lastStartAt: 9_999 },
+      {},
+    ]) {
+      const gate = { ...ok, ...patch };
+      expect(prefetchAllowed(gate)).toBe(prefetchRefusal(gate) === null);
+    }
+  });
+
+  it('reports the reader’s own settings before the throughput limits', () => {
+    // Everything wrong at once. A reader who switched prefetch off must not be
+    // told the pipeline is busy.
+    expect(
+      prefetchRefusal({ ...ok, enabled: false, lookahead: 0, inFlight: 9, foregroundWaiting: true }),
+    ).toBe('disabled');
   });
 });

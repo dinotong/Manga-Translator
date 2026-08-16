@@ -12,6 +12,8 @@ import {
   pickPrefetch,
   prefetchAllowed,
   type PrefetchGate,
+  type PrefetchRefusal,
+  prefetchRefusal,
 } from '../core/prefetch';
 import { clampInFlight, compareWork, type WorkKind } from '../core/scheduling';
 import { MAX_PAGES_PER_REQUEST } from '../core/batch';
@@ -439,6 +441,34 @@ export default defineContentScript({
     /** Gallery the two counters above belong to. */
     let prefetchSet: string | null = null;
 
+    /**
+     * Why prefetch is not starting, counted rather than guessed at.
+     *
+     * The reader's report is always the same sentence — "it is only a few pages
+     * ahead" — and it has seven possible causes with opposite fixes. Twice now
+     * that has been answered by reading the gate and reasoning, and twice the
+     * reasoning was wrong; the tick runs four times a second, so a tally costs
+     * nothing and settles it from one real read.
+     *
+     * Logged at most every LOG_REFUSALS_MS, and only while the reader is
+     * plainly still reading, so a backgrounded tab does not fill the console.
+     */
+    const prefetchRefusals = new Map<PrefetchRefusal, number>();
+    let refusalsLoggedAt = 0;
+    const LOG_REFUSALS_MS = 15_000;
+
+    function noteRefusal(reason: PrefetchRefusal, gate: PrefetchGate): void {
+      prefetchRefusals.set(reason, (prefetchRefusals.get(reason) ?? 0) + 1);
+      if (reason === 'hidden' || reason === 'disabled' || reason === 'no-lookahead') return;
+      const now = Date.now();
+      if (refusalsLoggedAt !== 0 && now - refusalsLoggedAt < LOG_REFUSALS_MS) return;
+      refusalsLoggedAt = now;
+      const tally = [...prefetchRefusals].map(([k, n]) => `${k}=${n}`).join(' ');
+      log.info(
+        `prefetch held back: ${tally} · lookahead=${gate.lookahead} inFlight=${gate.inFlight}/${gate.batchSize ?? 1} misses=${gate.consecutiveMisses}`,
+      );
+    }
+
     function speculativeInFlight(): number {
       let n = 0;
       for (const job of active.values()) if (job.speculative) n++;
@@ -527,7 +557,12 @@ export default defineContentScript({
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
       };
-      if (!prefetchAllowed(gate)) return;
+      const refusal = prefetchRefusal(gate);
+      if (refusal) {
+        noteRefusal(refusal, gate);
+        return;
+      }
+      prefetchRefusals.clear();
 
       const target = fromPublished(cfg, gate) ?? fromPattern(cfg, url, gate);
       if (!target) return;
