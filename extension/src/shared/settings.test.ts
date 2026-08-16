@@ -18,7 +18,7 @@ describe('hydrate — v1 to v2 key migration', () => {
       version: 1,
       translation: { gemini: { apiKey: 'AIza-real-key', model: 'gemini-flash-lite-latest' } },
     });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys).toHaveLength(1);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-real-key');
     expect(s.translation.gemini.model).toBe('gemini-flash-lite-latest');
@@ -93,7 +93,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 
   it('handles storage that is empty or garbage', () => {
     expect(hydrate(undefined).translation.gemini.keys).toEqual([]);
-    expect(hydrate(null).version).toBe(5);
+    expect(hydrate(null).version).toBe(6);
     expect(hydrate({ translation: { gemini: { keys: 'nope' } } }).translation.gemini.keys).toEqual([]);
   });
 });
@@ -107,7 +107,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => {
   it('keeps the sites auto-translate was aimed at, for someone who had it on', () => {
     const s = hydrate({ version: 2, autoTranslate: true });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.autoSites).toEqual([...PROFILE_HOSTS]);
     expect(s.autoSites).toContain('imhentai.xxx');
     expect(s.autoSites).toContain('mangadex.org');
@@ -162,7 +162,7 @@ describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => 
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('imhentai.xxx');
   });
@@ -188,7 +188,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       translation: { gemini: { keys: [{ id: 'a', label: 'หลัก', key: 'AIza-real' }] } },
       perSet: { 'imhentai.xxx/1474885': { source: 'ja' } },
     });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['imhentai.xxx', 'mangadex.org']);
     expect(s.perSet['imhentai.xxx/1474885']).toEqual({ source: 'ja' });
@@ -226,7 +226,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('mangadex.org');
     expect(s.cache.maxPages).toBe(DEFAULT_CACHE_PAGES);
@@ -258,7 +258,7 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
       display: { boxOpacity: 0.92, fontScale: 1.1, peekOnHover: false },
       perSet: { 'e-hentai.org/4118730': { source: 'ja' } },
     });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['e-hentai.org', 'nhentai.net']);
     expect(s.cache).toEqual({ maxPages: 60, maxBytes: 100 * 1024 * 1024 });
@@ -296,10 +296,50 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
     expect(hydrate({ version: 5, display: { plateOpacity: 'solid' } }).display.plateOpacity).toBe(1);
   });
 
-  it('takes a v1 all the way to v5', () => {
+  it('takes a v1 all the way to v6', () => {
     const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
-    expect(s.version).toBe(5);
+    expect(s.version).toBe(6);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
+  });
+});
+
+/**
+ * The one migration in this file that throws a stored value away on purpose.
+ *
+ * Every other one carries the reader's choice forward. This one cannot: before
+ * v6 the default was `true` and `hydrate` writes defaults into the record, so a
+ * stored `true` is indistinguishable from the old default and mostly *is* it —
+ * and leaving it on means the reader keeps a feature that merged three speech
+ * balloons into one translation without ever choosing to have it.
+ */
+describe('hydrate — v5 to v6 model grouping becomes opt-in', () => {
+  it('is off on a fresh install', () => {
+    expect(hydrate(null).translation.modelGrouping).toBe(false);
+    expect(DEFAULT_SETTINGS.translation.modelGrouping).toBe(false);
+  });
+
+  it('switches off a record that carried the old on-by-default true', () => {
+    const s = hydrate({ version: 5, translation: { modelGrouping: true } });
+    expect(s.translation.modelGrouping).toBe(false);
+  });
+
+  it('switches off a record from before the field existed', () => {
+    expect(hydrate({ version: 4 }).translation.modelGrouping).toBe(false);
+  });
+
+  it('keeps the reader’s choice once the record is v6', () => {
+    expect(hydrate({ version: 6, translation: { modelGrouping: true } }).translation.modelGrouping)
+      .toBe(true);
+    expect(hydrate({ version: 6, translation: { modelGrouping: false } }).translation.modelGrouping)
+      .toBe(false);
+    expect(hydrate({ version: 6 }).translation.modelGrouping).toBe(false);
+  });
+
+  it('reads anything that is not exactly true as off', () => {
+    for (const v of ['true', 1, {}, null]) {
+      expect(hydrate({ version: 6, translation: { modelGrouping: v } }).translation.modelGrouping)
+        .toBe(false);
+    }
   });
 });

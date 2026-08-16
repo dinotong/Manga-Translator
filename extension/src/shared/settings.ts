@@ -37,8 +37,13 @@ export interface Settings {
    *         `plateOpacity` and `panelOpacity`, because the element was doing two
    *         jobs that want opposite settings. Both inherit the old value, so the
    *         upgrade changes nothing on screen until the reader moves a slider.
+   * 5 -> 6: `translation.modelGrouping` becomes opt-in and is forced off once.
+   *         It shipped on by default in D-036 and merged three separate speech
+   *         balloons into one translation on the owner's page, so every stored
+   *         `true` written before this version is the old default speaking, not
+   *         a reader's decision, and is not worth honouring.
    */
-  version: 5;
+  version: 6;
 
   /**
    * The master kill switch, and the only thing here that is still global.
@@ -99,14 +104,18 @@ export interface Settings {
      * Let the model say which detected blocks are fragments of one continuous
      * text, so a sentence split across several columns is translated whole.
      *
-     * What comes back is a proposal and geometry vetoes it
-     * (core/merge-proposals.ts), and the reply still carries one item per crop
-     * either way — so turning this off restores the previous behaviour exactly,
-     * which is the point of it being a switch at all. Optional rather than
-     * versioned: an absent field means "on", so nobody's stored settings need
-     * migrating for it.
+     * **Off unless the reader asks for it.** It shipped on by default in D-036
+     * behind a geometric veto (core/merge-proposals.ts), and the veto let a real
+     * page through: three separate speech balloons in one panel became a single
+     * block, so one balloon's Thai was stretched over all three and the other two
+     * went untranslated. A feature whose failure mode is putting one character's
+     * words in another character's mouth has to be opted into — the reader cannot
+     * see it happen, which is exactly why the default cannot be the risky one.
+     *
+     * The reply still carries one item per crop either way, so off is the
+     * previous behaviour exactly, at no cost.
      */
-    modelGrouping?: boolean;
+    modelGrouping: boolean;
   };
 
   ocr: {
@@ -190,7 +199,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 5,
+  version: 6,
   enabled: true,
   autoSites: [],
   lang: { source: 'ja', target: 'th' },
@@ -212,7 +221,7 @@ export const DEFAULT_SETTINGS: Settings = {
       timeoutMs: 60_000,
     },
     contextBubbles: 3,
-    modelGrouping: true,
+    modelGrouping: false,
   },
   ocr: { runtime: 'auto', preset: 'balanced', dilateRatio: 0.01 },
   display: {
@@ -324,6 +333,27 @@ function migrateDisplay(
   return { plateOpacity: legacy, panelOpacity: legacy };
 }
 
+/**
+ * v5 -> v6: model-proposed grouping becomes opt-in, and every existing record
+ * is switched off once.
+ *
+ * Not gated the way the migrations above are, and the difference is the point.
+ * Those carry a reader's choice forward. This one deliberately discards a stored
+ * value, because a `true` written before v6 is not a choice: `DEFAULT_SETTINGS`
+ * said `true`, `hydrate` copies defaults into the record on the next write, and
+ * so everyone who ever opened the settings page has a `true` in storage whether
+ * or not they have heard of the feature. Honouring that would leave the failure
+ * D-037 is about switched on for exactly the people who never asked for it.
+ *
+ * The cost is one checkbox for anyone who did turn it on deliberately. The
+ * alternative cost is one character's line printed inside another character's
+ * balloon, invisibly, on a page they are reading.
+ */
+function migrateModelGrouping(version: unknown, stored: unknown): boolean {
+  if (Number(version) < 6) return false;
+  return stored === true;
+}
+
 function isKeyEntry(v: unknown): v is ApiKeyEntry {
   const e = v as ApiKeyEntry | null;
   return (
@@ -345,7 +375,7 @@ export function hydrate(stored: unknown): Settings {
   const next: Settings & { autoTranslate?: unknown; display: Settings['display'] & { boxOpacity?: unknown } } = {
     ...d,
     ...s,
-    version: 5,
+    version: 6,
     // Normalised on read, not only on write: this list decides which sites are
     // allowed to spend the reader's daily quota, so a hand-edited storage entry
     // must not be able to add a site under a spelling the popup cannot show.
@@ -363,6 +393,7 @@ export function hydrate(stored: unknown): Settings {
         safetyOff: gemini?.safetyOff ?? d.translation.gemini.safetyOff,
       },
       ollama: { ...d.translation.ollama, ...s.translation?.ollama },
+      modelGrouping: migrateModelGrouping(s.version, s.translation?.modelGrouping),
     },
     ocr: { ...d.ocr, ...s.ocr },
     // Clamped on read like the lists and budgets above: an alpha outside [0,1]

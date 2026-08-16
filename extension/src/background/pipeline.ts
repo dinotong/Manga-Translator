@@ -47,8 +47,8 @@ export async function runJob(
     {
       from,
       to,
-      // Absent means on. See shared/settings.ts for why this is not versioned.
-      grouping: settings.translation.modelGrouping !== false,
+      // Opt-in. See shared/settings.ts for what it cost when it was not.
+      grouping: settings.translation.modelGrouping,
       ...(source.setKey && settings.translation.contextBubbles > 0
         ? { context: (recentContext.get(source.setKey) ?? []).slice(-settings.translation.contextBubbles) }
         : {}),

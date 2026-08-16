@@ -326,7 +326,7 @@ function Options() {
         <label class="switch">
           <input
             type="checkbox"
-            checked={s.translation.modelGrouping !== false}
+            checked={s.translation.modelGrouping}
             onChange={(e) =>
               void patch({
                 translation: {
