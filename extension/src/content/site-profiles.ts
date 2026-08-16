@@ -155,6 +155,192 @@ const imhentai: SiteProfile = {
   },
 };
 
+/**
+ * luscious.net — a long strip, and the site that proved the page-level gate
+ * needed a distance rule (D-032).
+ *
+ * Everything below was read off the live reader through CDP on 2026-08-16, on
+ * `members.luscious.net` (the host the owner's switch is actually set for) and
+ * on `www.luscious.net`, which serve the same markup.
+ *
+ * The reader mounts a *window* of pages, not the whole album: measured, three
+ * `.picture-row` elements at the top of an album, growing to five as the reader
+ * scrolls, of which two or three have decoded and the rest already carry the
+ * real `src`. So the pages just ahead of the reader are in the DOM, with their
+ * true URLs, before they are needed — which is where the batcher's material
+ * comes from here, without a single speculative request.
+ *
+ * What is *not* in the DOM is anything further ahead, and that is why there is
+ * no `prefetch` block: the image URL is
+ * `https://ah-img.luscious.net/syswift/<album>/<name>_p_01KGT1KM6FF7005SEG0RQA8HQA.1680x0.jpg`,
+ * where the middle segment is a per-picture ULID. Nothing in it counts, so
+ * nothing about page n tells us the URL of page n+1. The album's own GraphQL
+ * endpoint knows, but asking it is an extra request to their server, which is
+ * exactly what `prefetch.total` is forbidden to cost.
+ */
+const luscious: SiteProfile = {
+  id: 'luscious',
+  match: (u) => /(^|\.)luscious\.net$/.test(u.hostname),
+  // `members.` and the bare host are separate keys to core/site-scope.ts —
+  // only `www.` is folded away — and the owner reads on `members.`.
+  seedHosts: ['luscious.net', 'members.luscious.net'],
+  // Deliberately built from the two class names that are *not* CSS-module
+  // hashes. The wrapper next to these reads
+  // `picture_grid-module__pictureFrameWrapper--w_ApE`, which is regenerated on
+  // every deploy; `.picture-row` and `<picture>` are hand-written and stable.
+  //
+  // Measured, this matches the 3 page rows and none of the other 15 images on
+  // the reader — including the nine-image "you might also like" rail that made
+  // every album look like a listing before D-032, and which sat 91,445 px below
+  // the viewport when this was measured.
+  pageSelector: '.picture-row picture img',
+  // ah-img.luscious.net, cross-origin from every page host, no CORS header.
+  acquire: 'sw-fetch',
+  reader: 'strip',
+  // Both Japanese and English albums, so a fixed source language is wrong about
+  // half the time.
+  sourceLang: 'auto',
+  // `/albums/{slug}_{id}/read/` is the reader; `/albums/{slug}_{id}/` is that
+  // album's own listing of thumbnails, and `/albums/list/…`, `/albums/new/…`,
+  // `/hentai-manga/…` and the front page are all listings. Measured on the
+  // album page: twelve images at 400 px or wider — thumbnails big enough to
+  // score as pages, which is the trap this closes.
+  isReaderPage: (u) => /^\/albums\/[^/]+\/read\/?$/.test(u.pathname),
+  setKey: (u) => u.pathname.match(/^\/albums\/([^/]+)\/read\/?$/)?.[1] ?? null,
+  // `?index=` is zero-based, and — measured over four scroll steps — the site
+  // rewrites it as the strip moves, so it really does name the page in front of
+  // the reader rather than the one they entered on. Reported one-based to match
+  // every other site here. Nothing consumes it while `prefetch` is absent; it
+  // is here because it is true and because the next person to ask "can this
+  // site be read ahead?" should not have to measure it again.
+  pageNumber: (u) => {
+    const raw = u.searchParams.get('index');
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n + 1 : null;
+  },
+  notes: 'Long strip. Image URLs carry a per-picture ULID — unpredictable, so no prefetch.',
+};
+
+/**
+ * e-hentai / exhentai — two readers on one site.
+ *
+ * MPV (`/mpv/{gid}/{token}/`) is the "read all" strip the owner uses. Measured
+ * on the live page: it lays out one `div#image_{n}.mimg` placeholder per page —
+ * 40 of them for a 40-page gallery, so the length of the book is free — and
+ * keeps a sliding window of nine decoded `<img id="imgsrc_{n}">` inside them,
+ * dropping the ones behind. Two of those nine are ahead of the reader, which is
+ * what the batcher gets to work with here.
+ *
+ * `/s/{key}/{gid}-{page}` is the classic one-page-at-a-time reader, a single
+ * `<img id="img">` inside `#i3`. Both are covered.
+ *
+ * No `prefetch`, and this one is worth being precise about because it looks so
+ * close to possible. The image URL is a Hath node,
+ * `https://<random>.<random>.hath.network:5515/h/<sha1>-<size>-<w>-<h>-wbp/keystamp=…;fileindex=…/3.webp`
+ * — a different host per page, a per-file hash, a signed keystamp, and a
+ * trailing number that is the *original filename*, not the page (page 5 of the
+ * measured gallery ends in `1.webp`). `bumpTrailingNumber` would produce a
+ * request to the wrong host for a file that does not exist.
+ *
+ * The page's own `window.imagelist` does hold real URLs — but measured, only
+ * for the nine pages MPV has already loaded (`withI: 9` of 40), which are
+ * exactly the pages that are already in the DOM as elements. Reading it would
+ * add nothing, and filling it further means calling their API.
+ */
+const ehentai: SiteProfile = {
+  id: 'e-hentai',
+  match: (u) => /(^|\.)(e-hentai|exhentai)\.org$/.test(u.hostname),
+  seedHosts: ['e-hentai.org', 'exhentai.org'],
+  // Measured: 9 matches out of 61 images on MPV — the other 52 are the 25x20
+  // per-page toolbar icons and site chrome — and 1 of 14 on `/s/`.
+  pageSelector: '#pane_images img[id^="imgsrc_"], #i3 img',
+  // hath.network, cross-origin from e-hentai.org.
+  acquire: 'sw-fetch',
+  // MPV is a strip, /s/ is paged.
+  reader: 'auto',
+  sourceLang: 'auto',
+  // `/g/{gid}/{token}/` is the gallery listing, and the front page, `/tag/…`
+  // and `/?f_search=` are listings too. Measured on `/g/`: zero images 400 px
+  // or wider, because the thumbnails are CSS sprites rather than `<img>` — so
+  // it was already quiet there, but this makes it a fact about the site rather
+  // than a fact about their stylesheet.
+  isReaderPage: (u) =>
+    /^\/mpv\/\d+\/[0-9a-f]+/i.test(u.pathname) || /^\/s\/[0-9a-f]+\/\d+-\d+/i.test(u.pathname),
+  setKey: (u) =>
+    u.pathname.match(/^\/mpv\/(\d+)\//)?.[1] ??
+    u.pathname.match(/^\/s\/[0-9a-f]+\/(\d+)-\d+/i)?.[1] ??
+    null,
+  // Only `/s/` gets a page number. MPV's URL ends in `#page1`, and it is
+  // tempting to read that as the current page — but measured, scrolling 3,700 px
+  // through the strip left the hash at `#page1`. It records the last thumbnail
+  // the reader clicked, not where they are, and answering with it would be
+  // answering with a stale number.
+  pageNumber: (u) => {
+    const n = u.pathname.match(/^\/s\/[0-9a-f]+\/\d+-(\d+)/i)?.[1];
+    return n ? Number(n) : null;
+  },
+  notes:
+    'MPV keeps ~9 decoded pages in the DOM. Image URLs are signed per-file Hath links — unpredictable, so no prefetch.',
+};
+
+/**
+ * nhentai — the one of the three that *can* be read ahead.
+ *
+ * Measured on the live reader: `/g/{id}/{n}/` shows one image inside
+ * `<section id="image-container">`, served as
+ * `https://i{1..4}.nhentai.net/galleries/{media_id}/{n}.{ext}` where `{n}` is
+ * the page number itself. That is the imhentai shape, so `bumpTrailingNumber`
+ * applies unchanged, and the nav bar carries `<span class="num-pages">` so the
+ * end of the book costs nothing to learn.
+ *
+ * Two things about the guess were checked rather than assumed:
+ *
+ *   - The host shard varies per page (pages 1,2,3,5 of one gallery came from
+ *     i3, i2, i1, i3) but the shards mirror each other, so keeping the current
+ *     page's host and changing only the number works: 24 of 24 in-range guesses
+ *     loaded, across four galleries.
+ *   - The extension is per gallery, not per site — older galleries are `.jpg`,
+ *     newer ones `.webp` — and `bumpTrailingNumber` carries the current page's
+ *     extension over, which is why that does not matter. A gallery that mixes
+ *     the two within itself would cost at most the two misses that
+ *     MAX_CONSECUTIVE_MISSES allows before prefetch gives up on it; none of the
+ *     four sampled did.
+ *
+ * The only failures in that sweep were pages past the end of the book, which
+ * `pickPrefetch` never asks for once `total()` answers.
+ */
+const nhentai: SiteProfile = {
+  id: 'nhentai',
+  match: (u) => /(^|\.)nhentai\.net$/.test(u.hostname),
+  seedHosts: ['nhentai.net'],
+  pageSelector: '#image-container img',
+  // i{n}.nhentai.net, cross-origin from nhentai.net.
+  acquire: 'sw-fetch',
+  reader: 'paged',
+  sourceLang: 'auto',
+  // `/g/{id}/{n}/` is the reader; `/g/{id}/` is the cover-and-thumbnails
+  // listing for the same gallery — measured, 21 images at 400 px or wider on
+  // it, every one of them a thumbnail — and `/`, `/search/`, `/tag/…` and
+  // `/random/` are listings too.
+  isReaderPage: (u) => /^\/g\/\d+\/\d+\/?$/.test(u.pathname),
+  setKey: (u) => u.pathname.match(/^\/g\/(\d+)\//)?.[1] ?? null,
+  pageNumber: (u) => {
+    const n = u.pathname.match(/^\/g\/\d+\/(\d+)/)?.[1];
+    return n ? Number(n) : null;
+  },
+  prefetch: {
+    // The reader's own "n of N" counter, already rendered. Reading it is a DOM
+    // lookup, not a request — the rule this field exists under.
+    total: (doc) => {
+      const raw = doc.querySelector('.num-pages')?.textContent?.trim();
+      const n = raw ? Number(raw) : Number.NaN;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    },
+    imageUrl: (currentSrc, ahead) => bumpTrailingNumber(currentSrc, ahead),
+  },
+};
+
 /** Anything else: heuristic scoring in scan.ts decides what is a manga page. */
 export const DEFAULT_PROFILE: SiteProfile = {
   id: 'default',
@@ -163,7 +349,7 @@ export const DEFAULT_PROFILE: SiteProfile = {
   reader: 'auto',
 };
 
-const REGISTRY: readonly SiteProfile[] = [mangadex, imhentai];
+const REGISTRY: readonly SiteProfile[] = [mangadex, imhentai, luscious, ehentai, nhentai];
 
 export function profileFor(url: URL): SiteProfile {
   return REGISTRY.find((p) => p.match(url)) ?? DEFAULT_PROFILE;
