@@ -1,4 +1,7 @@
+import { type CacheEntry, type CacheLimits, normalizeCacheLimits, planEviction } from '../core/cache-budget';
+import { makeLog } from '../shared/log';
 import type { CacheStats } from '../shared/messages';
+import { loadSettings } from '../shared/settings';
 import { approxBytes, db, type OcrRecord, type TranslationRecord } from './db';
 
 /**
@@ -7,10 +10,13 @@ import { approxBytes, db, type OcrRecord, type TranslationRecord } from './db';
  * Every read touches lastAccessedAt, because the thing worth keeping is what is
  * being re-read — a chapter the user is part way through — not what happened to
  * be written most recently.
+ *
+ * How much is kept is the reader's choice and lives in settings; what to drop
+ * when that is exceeded is arithmetic and lives in core/cache-budget.ts. This
+ * file only moves records.
  */
 
-const BUDGET_BYTES = 200 * 1024 * 1024;
-const EVICT_TO_BYTES = 160 * 1024 * 1024;
+const log = makeLog('cache');
 
 export async function getOcr(key: string): Promise<OcrRecord | undefined> {
   const store = await db();
@@ -63,21 +69,41 @@ export async function putTranslations(
   await tx.done;
 }
 
-export async function cacheStats(): Promise<CacheStats> {
+/**
+ * Every record in both stores, reduced to what the budget cares about.
+ *
+ * One pass, reused for both the stats readout and the eviction plan. The old
+ * code scanned everything to add up bytes and then scanned again to evict; the
+ * plan needs the same three fields either way, so there is no reason to pay
+ * twice on a service worker that is fighting to stay alive.
+ */
+async function scan(): Promise<{ ocr: CacheEntry[]; translation: CacheEntry[] }> {
   const store = await db();
-  let bytes = 0;
+  const out = { ocr: [] as CacheEntry[], translation: [] as CacheEntry[] };
   for (const name of ['ocr', 'translation'] as const) {
     let cursor = await store.transaction(name).store.openCursor();
     while (cursor) {
-      bytes += cursor.value.bytes;
+      const { key, bytes, lastAccessedAt } = cursor.value;
+      out[name].push({ key, bytes, lastAccessedAt });
       cursor = await cursor.continue();
     }
   }
+  return out;
+}
+
+function totals(scanned: { ocr: CacheEntry[]; translation: CacheEntry[] }): CacheStats {
+  let bytes = 0;
+  for (const e of scanned.ocr) bytes += e.bytes;
+  for (const e of scanned.translation) bytes += e.bytes;
   return {
-    ocrRecords: await store.count('ocr'),
-    translationRecords: await store.count('translation'),
+    ocrRecords: scanned.ocr.length,
+    translationRecords: scanned.translation.length,
     bytes,
   };
+}
+
+export async function cacheStats(): Promise<CacheStats> {
+  return totals(await scan());
 }
 
 export async function clearCache(which: 'all' | 'ocr' | 'translation'): Promise<void> {
@@ -87,26 +113,38 @@ export async function clearCache(which: 'all' | 'ocr' | 'translation'): Promise<
 }
 
 /**
- * Evict oldest-accessed OCR records until we are back under budget.
+ * Bring the cache back inside the reader's page budget and the byte ceiling.
  *
- * Only the ocr store is evicted: translation records are tiny and are the ones
- * that pay off across a whole series, so dropping them saves almost no space
- * while throwing away the best cache hits we have.
+ * Returns the number of *readings* dropped, which is the number the caller
+ * reports; a translation eviction is rare enough, and alarming enough, to be
+ * worth its own log line here instead.
+ *
+ * `limits` is optional so the pipeline can keep calling this with no arguments.
+ * Reading settings costs one storage lookup per finished page, which is nothing
+ * next to the request that produced the page — and it means changing the
+ * setting takes effect on the very next page rather than whenever the service
+ * worker next happens to restart.
  */
-export async function evictIfNeeded(): Promise<number> {
-  const { bytes } = await cacheStats();
-  if (bytes <= BUDGET_BYTES) return 0;
+export async function evictIfNeeded(limits?: CacheLimits): Promise<number> {
+  const budget = limits ?? normalizeCacheLimits((await loadSettings()).cache);
+  const scanned = await scan();
+  const plan = planEviction(scanned.ocr, scanned.translation, budget);
+  if (plan.ocr.length === 0 && plan.translation.length === 0) return 0;
 
   const store = await db();
-  let remaining = bytes;
-  let removed = 0;
-  let cursor = await store.transaction('ocr', 'readwrite').store.index('lastAccessedAt').openCursor();
-
-  while (cursor && remaining > EVICT_TO_BYTES) {
-    remaining -= cursor.value.bytes;
-    removed++;
-    await cursor.delete();
-    cursor = await cursor.continue();
+  if (plan.ocr.length > 0) {
+    const tx = store.transaction('ocr', 'readwrite');
+    for (const key of plan.ocr) void tx.store.delete(key);
+    await tx.done;
   }
-  return removed;
+  if (plan.translation.length > 0) {
+    // Only reachable once every reading has already gone and the byte ceiling
+    // is still exceeded. If this shows up in a log, the ceiling is set below
+    // what the translation store alone needs.
+    log.warn(`byte ceiling still exceeded with no readings left — dropping ${plan.translation.length} translations`);
+    const tx = store.transaction('translation', 'readwrite');
+    for (const key of plan.translation) void tx.store.delete(key);
+    await tx.done;
+  }
+  return plan.ocr.length;
 }

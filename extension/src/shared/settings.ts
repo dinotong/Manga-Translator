@@ -1,4 +1,10 @@
 import { PROFILE_HOSTS } from '../content/site-profiles';
+import {
+  type CacheLimits,
+  DEFAULT_CACHE_BYTES,
+  DEFAULT_CACHE_PAGES,
+  normalizeCacheLimits,
+} from '../core/cache-budget';
 import { clampLookahead } from '../core/prefetch';
 import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
@@ -22,8 +28,11 @@ export interface Settings {
    * 2 -> 3: `autoTranslate` (one global boolean) became `autoSites` (a list of
    *         hostnames), because one switch governing every site in the browser
    *         spent quota on pages nobody asked about.
+   * 3 -> 4: `cache` appeared. Nothing to carry: the budget it replaces was a
+   *         constant in cache/stores.ts, never a stored value, so every
+   *         existing record simply gains the defaults.
    */
-  version: 3;
+  version: 4;
 
   /**
    * The master kill switch, and the only thing here that is still global.
@@ -112,12 +121,22 @@ export interface Settings {
     maxConcurrentOcr: 1;
   };
 
+  /**
+   * How much reading to keep. Rules and clamping in core/cache-budget.ts.
+   *
+   * Pages first, because that is the unit the question comes in — "does a
+   * chapter fit?" — and megabytes cannot answer it. The byte ceiling stays
+   * underneath as the actual guard on disk, since a page count on its own says
+   * nothing about how big a page turns out to be.
+   */
+  cache: CacheLimits;
+
   /** Remembered per gallery/series, so an auto-detected language is paid for once. */
   perSet: Record<string, { source?: SourceLang; enabled?: boolean }>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 3,
+  version: 4,
   enabled: true,
   autoSites: [],
   lang: { source: 'ja', target: 'th' },
@@ -151,6 +170,7 @@ export const DEFAULT_SETTINGS: Settings = {
     peekOnHover: true,
   },
   performance: { prefetchLookahead: 3, maxConcurrentOcr: 1 },
+  cache: { maxPages: DEFAULT_CACHE_PAGES, maxBytes: DEFAULT_CACHE_BYTES },
   perSet: {},
 };
 
@@ -229,7 +249,7 @@ export function hydrate(stored: unknown): Settings {
   const next: Settings & { autoTranslate?: unknown } = {
     ...d,
     ...s,
-    version: 3,
+    version: 4,
     // Normalised on read, not only on write: this list decides which sites are
     // allowed to spend the reader's daily quota, so a hand-edited storage entry
     // must not be able to add a site under a spelling the popup cannot show.
@@ -259,6 +279,12 @@ export function hydrate(stored: unknown): Settings {
       // able to raise it.
       prefetchLookahead: clampLookahead(s.performance?.prefetchLookahead ?? d.performance.prefetchLookahead),
     },
+    // v3 -> v4 is just this line: a record saved before the setting existed has
+    // no `cache` field, and normalize fills in both halves. Clamped on read for
+    // the same reason as the two above — and with one extra: the page floor is
+    // what keeps this setting from contradicting prefetchLookahead, so a
+    // hand-edited storage entry must not be able to get underneath it.
+    cache: normalizeCacheLimits(s.cache),
     perSet: { ...d.perSet, ...s.perSet },
   };
   // The `...s` spread above copies the v2 field through. Deleting it means the
