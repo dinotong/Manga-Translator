@@ -1,44 +1,62 @@
+import type { Routed } from '../core/batch';
 import {
   allSpent,
   type ApiKeyEntry,
   backoffMs,
   keyFingerprint,
   type KeyStatuses,
+  isUsable,
   nextQuotaResetAt,
   pickKey,
   type QuotaVerdict,
   withExhausted,
   withInvalid,
 } from '../core/quota';
+import { DEFAULT_LIMIT, pickPaced } from '../core/rate-limit';
 import { PipelineError } from '../shared/errors';
 import { loadKeyStatuses, saveKeyStatuses, tidyKeyStatuses } from '../shared/key-status';
 import { makeLog } from '../shared/log';
+import { loadRates, ratesNow, reserve } from '../shared/rate-record';
 import type { Settings } from '../shared/settings';
 import { GeminiProvider, type GeminiConfig, type ReadResult } from './GeminiProvider';
 
 const log = makeLog('keyring');
 
 /**
- * Several Gemini keys, used strictly in the order the user listed them.
+ * Several Gemini keys, paced so the extension stays under their limits instead
+ * of discovering them by being refused.
  *
- * The free tier meters 1,000 requests per key per day, so a second key is
- * simply a second day of reading. The subtlety — and the only reason this is a
- * class instead of three lines in the pipeline — is that Gemini answers **429
- * for two unrelated conditions**:
+ * Gemini answers **429 for two unrelated conditions**, and this class exists
+ * because treating them the same destroys the feature:
  *
- * - 15 requests/minute exceeded. Transient. The right move is to wait the delay
- *   the API itself supplies and retry the *same* key.
+ * - 15 requests/minute exceeded. Transient. Wait, or move to a key that has
+ *   room, and retry.
  * - 1,000 requests/day exceeded. Terminal until midnight Pacific. Only this one
- *   may advance to the next key.
+ *   marks a key spent.
  *
- * Rotating on the first kind is the failure that matters: a reader turning
- * pages quickly trips 15 RPM easily, and a ring that advances on it would walk
- * through every key the owner has within seconds and leave them with nothing —
- * with no visible cause, because each individual request "just" got a 429.
- * core/quota.ts does the classification against a real captured response body.
+ * core/quota.ts does that classification against a real captured response body,
+ * and an unclassifiable 429 counts as per-minute — being wrong that way costs a
+ * pause, being wrong the other way costs a key for a day.
  *
- * An unclassifiable 429 counts as per-minute. Being wrong that way costs a
- * pause; being wrong the other way costs a key for a day.
+ * ## What changed, and why the old rule was wrong
+ *
+ * The ring used to be strictly ordered: key 2 was touched only once key 1 was
+ * out of quota *for the day*. That reads sensibly and is wrong in the case that
+ * matters, because it means a reader hitting the *per-minute* ceiling on key 1
+ * sits and waits while key 2's entire per-minute allowance goes unused. Two keys
+ * are two ceilings; the old rule made them one.
+ *
+ * It is now: the key whose next free slot is soonest, ties going to the order
+ * the user chose (core/rate-limit.ts). While key 1 has room, everything still
+ * goes to key 1 — so a spare still drains second against the 1,000/day counter
+ * and still behaves like a spare. Spreading happens only when spreading is the
+ * only way to go faster.
+ *
+ * Measured before any of this: three real reads issued 19 requests and took
+ * **zero** 429s, at 2.5-3.0 requests per minute against a ceiling of 15 per key.
+ * So pacing is not what makes the extension faster — the concurrency split and
+ * batching do that. Pacing is what keeps it safe once those two make it able to
+ * exceed the ceiling for the first time.
  */
 
 /** Per-minute waits allowed inside one logical call before giving up. */
@@ -46,14 +64,18 @@ const MAX_MINUTE_RETRIES = 2;
 
 export interface KeyRingOptions {
   /**
-   * Longest a single call may sit waiting out a per-minute limit.
+   * Longest a single call may sit waiting for a free slot or out of a
+   * per-minute refusal.
    *
-   * Zero for speculative work: the worker runs one job at a time, so a prefetch
-   * that parks for 30 seconds also parks the page the reader is staring at.
+   * Speculative work passes a smaller budget than the reader's own, but no
+   * longer zero: jobs used to be serialised, so a parked prefetch parked the
+   * visible page with it. They are not any more, and a prefetch that gives up
+   * instantly throws away work already paid for — the image was fetched and the
+   * detector has already run on it.
    */
   maxWaitMs: number;
   /** Told about a wait so the status pill can explain the pause. */
-  onWait?: (ms: number, verdict: QuotaVerdict) => void;
+  onWait?: (ms: number, verdict: QuotaVerdict | null) => void;
 }
 
 type LangCfg = Omit<GeminiConfig, 'apiKey' | 'model' | 'safetyOff'>;
@@ -75,11 +97,7 @@ export class KeyRing {
     this.statuses = statuses;
   }
 
-  static async create(
-    settings: Settings,
-    lang: LangCfg,
-    opts: KeyRingOptions,
-  ): Promise<KeyRing> {
+  static async create(settings: Settings, lang: LangCfg, opts: KeyRingOptions): Promise<KeyRing> {
     const keys = settings.translation.gemini.keys;
     if (keys.every((k) => k.key.trim() === '')) {
       throw new PipelineError('NO_API_KEY', 'no Gemini API key configured');
@@ -87,6 +105,9 @@ export class KeyRing {
     // Clearing yesterday's exhaustion on load, rather than on a timer, is what
     // makes the reset happen without the user having to do anything.
     const statuses = await tidyKeyStatuses(keys);
+    // Pull the rate record into memory before anything reserves against it, so
+    // a worker that has just restarted does not start from a blank window.
+    await loadRates();
     return new KeyRing(
       keys,
       statuses,
@@ -108,6 +129,14 @@ export class KeyRing {
     return entry ? entry.label || keyFingerprint(entry.key) : null;
   }
 
+  /** Crops from several pages in one request. See core/batch.ts. */
+  async readPages(
+    pages: readonly (readonly ArrayBuffer[])[],
+    signal?: AbortSignal,
+  ): Promise<Routed> {
+    return this.run((p) => p.readPages(pages, signal), signal);
+  }
+
   async readPage(crops: readonly ArrayBuffer[], signal?: AbortSignal): Promise<ReadResult[]> {
     if (crops.length === 0) return [];
     return this.run((p) => p.readPage(crops, signal), signal);
@@ -117,8 +146,9 @@ export class KeyRing {
    * Retry a refused page one bubble at a time.
    *
    * Re-implemented here rather than delegated so each single-bubble call gets
-   * its own rotation: a page that needs this costs N requests, which is exactly
-   * the situation most likely to exhaust the key halfway through.
+   * its own key choice: a page that needs this costs N requests, which is
+   * exactly the situation most likely to run a key out of per-minute room
+   * halfway through.
    */
   async readPageIndividually(
     crops: readonly ArrayBuffer[],
@@ -165,10 +195,40 @@ export class KeyRing {
     signal?: AbortSignal,
   ): Promise<T> {
     let waits = 0;
+    let paced = 0;
 
     for (;;) {
-      const entry = pickKey(this.keys, this.statuses, Date.now());
-      if (!entry) throw this.nothingLeft();
+      const now = Date.now();
+      const usable = this.keys.filter((k) => isUsable(k, this.statuses[k.id], now));
+      const choice = usable.length
+        ? pickPaced(usable, (k) => ratesNow()[k.id] ?? [], now, DEFAULT_LIMIT)
+        : null;
+      if (!choice) throw this.nothingLeft();
+
+      const entry = choice.key;
+
+      if (choice.readyAt > now) {
+        // Every key we may use is full for the moment. Waiting here is the
+        // whole point: the alternative is a request that earns a 429 and then
+        // has to wait *anyway*, having spent a round trip to find out.
+        const wait = Math.min(choice.readyAt - now, this.opts.maxWaitMs);
+        if (wait <= 0 || paced >= MAX_MINUTE_RETRIES) {
+          throw new PipelineError(
+            'QUOTA_EXCEEDED',
+            `all keys paced out for ${choice.readyAt - now} ms`,
+            `ยิงครบโควตาต่อนาทีของทุก key แล้ว — รออีก ${Math.ceil((choice.readyAt - now) / 1000)} วินาที`,
+          );
+        }
+        paced++;
+        log.debug(`pacing: no free slot for ${wait} ms`);
+        this.opts.onWait?.(wait, null);
+        await sleep(wait, signal);
+        continue;
+      }
+
+      // Synchronous, before any await: this is what stops two concurrent jobs
+      // from both deciding the same last slot is theirs.
+      reserve(entry.id, now);
 
       try {
         return await fn(this.provider(entry));
@@ -186,7 +246,12 @@ export class KeyRing {
 
         if (err.code !== 'QUOTA_EXCEEDED') throw err;
 
-        const verdict = err.quota ?? { scope: 'unknown' as const, retryAfterMs: null, quotaId: null, limit: null };
+        const verdict = err.quota ?? {
+          scope: 'unknown' as const,
+          retryAfterMs: null,
+          quotaId: null,
+          limit: null,
+        };
 
         if (verdict.scope === 'per-day') {
           log.info(`key ${label(entry)} is out of daily quota — moving to the next one`);
@@ -194,11 +259,14 @@ export class KeyRing {
           continue;
         }
 
-        // Per-minute, or a body we could not read. Same key, after a pause.
+        // Per-minute, or a body we could not read. Our own pacing was wrong or
+        // something outside this extension is spending the same key, so believe
+        // the API: fill this key's window so the next pick moves elsewhere.
+        fillWindow(entry.id, Date.now());
         const wait = Math.min(backoffMs(verdict, waits), this.opts.maxWaitMs);
         if (waits >= MAX_MINUTE_RETRIES || wait <= 0) throw err;
         waits++;
-        log.info(`per-minute limit on ${label(entry)} — waiting ${wait} ms and retrying same key`);
+        log.info(`per-minute limit on ${label(entry)} — waiting ${wait} ms`);
         this.opts.onWait?.(wait, verdict);
         await sleep(wait, signal);
       }
@@ -243,6 +311,18 @@ export class KeyRing {
     }
     return new PipelineError('NO_API_KEY', 'no usable Gemini API key');
   }
+}
+
+/**
+ * Believe a 429 over our own bookkeeping.
+ *
+ * Our window can be an undercount for reasons we cannot see: the same key pasted
+ * into a second browser profile, or another tool of the user's. When the API says
+ * the key is full, marking it full is what moves the next request to the other
+ * key instead of walking into a second refusal.
+ */
+function fillWindow(keyId: string, now: number): void {
+  for (let i = 0; i < DEFAULT_LIMIT.limit; i++) reserve(keyId, now);
 }
 
 function label(entry: ApiKeyEntry): string {
