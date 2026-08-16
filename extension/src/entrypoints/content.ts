@@ -490,16 +490,50 @@ export default defineContentScript({
     /** Pages whose translation we already hold, for `readAheadLead`. */
     const prefetchReady = new Set<number>();
     const prefetchStats = { ticks: 0, allowed: 0, started: 0, adopted: 0 };
-    let heartbeatAt = 0;
     const HEARTBEAT_MS = 15_000;
 
-    function prefetchHeartbeat(gate: PrefetchGate, currentPage: number | null): void {
-      const now = Date.now();
-      if (heartbeatAt !== 0 && now - heartbeatAt < HEARTBEAT_MS) return;
-      heartbeatAt = now;
-      // A backgrounded tab is not reading and must not fill the console; a site
-      // that is switched off has nothing to say either.
-      if (!gate.enabled || !gate.visible) return;
+    /**
+     * 🔴 The heartbeat runs on its own timer, and that is the whole point.
+     *
+     * The first version of this called the heartbeat from inside `prefetchTick`.
+     * Measured on a real imhentai read it printed **nothing at all** in ninety
+     * seconds — one `prefetch page 2` at t=0 and then silence, with jobs j1
+     * through j13 proving the content script was alive throughout.
+     *
+     * The instrument was wired to the thing it was measuring. `prefetchTick`
+     * runs on `prefetchTimer`, which `stopPrefetch` clears from four different
+     * places, so anything that stopped the tick also stopped the reporting on
+     * it — and silence then means either "healthy and quiet" or "the feature is
+     * dead", with no way to tell which. That ambiguity is what the read ran into,
+     * and it is the same shape as the harness in D-038 that was not calibrated
+     * to the thing it was measuring.
+     *
+     * So: an independent interval, and `ticks` is printed so a tick that has
+     * stopped advancing between two heartbeats is visible as a fact rather than
+     * as an absence. Silence now has exactly one meaning — the content script
+     * itself is gone.
+     *
+     * `heartbeatAt` is gone with it. Keeping the cadence in a timestamp meant
+     * the window was consumed *before* the visible/enabled gates were checked,
+     * so a moment spent hidden threw away a whole reporting window.
+     */
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let ticksAtLastHeartbeat = 0;
+
+    function startHeartbeat(): void {
+      if (heartbeatTimer !== undefined || !profile.prefetch) return;
+      heartbeatTimer = setInterval(prefetchHeartbeat, HEARTBEAT_MS);
+    }
+    function stopHeartbeat(): void {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = undefined;
+    }
+
+    function prefetchHeartbeat(): void {
+      // A backgrounded tab is not reading and must not fill the console.
+      if (document.visibilityState !== 'visible') return;
+      const gate = prefetchGate();
+      const currentPage = profile.pageNumber?.(new URL(location.href)) ?? null;
       const refused =
         [...prefetchRefusals]
           .sort((a, b) => b[1] - a[1])
@@ -507,8 +541,15 @@ export default defineContentScript({
           .join(' ') || 'none';
       const failed = [...prefetchFailures].map(([k, n]) => `${k}=${n}`).join(' ') || 'none';
       const budget = clampInFlight(settings.performance.maxConcurrentRequests);
+      // The tick's own health, in the same line as the numbers it produces —
+      // every count below is meaningless if it stopped advancing.
+      const moved = prefetchStats.ticks - ticksAtLastHeartbeat;
+      ticksAtLastHeartbeat = prefetchStats.ticks;
+      const tick =
+        prefetchTimer === undefined ? 'STOPPED' : moved === 0 ? 'STALLED' : `+${moved}`;
       log.info(
         `prefetch · lead=${readAheadLead(currentPage, prefetchReady)} at page ${currentPage ?? '?'}` +
+          ` · tick=${tick} auto=${gate.enabled}` +
           ` · started=${prefetchStats.started} ready=${prefetchReady.size}` +
           ` adopted=${prefetchStats.adopted} failed{${failed}}` +
           ` misses=${prefetchMisses}/${MAX_CONSECUTIVE_MISSES}` +
@@ -571,6 +612,38 @@ export default defineContentScript({
       return guess ? { page: pick, url: guess, guessed: true } : null;
     }
 
+    /**
+     * Everything the gate decides on, read fresh.
+     *
+     * One function rather than one object built inside the tick, so the
+     * heartbeat reports the state the tick would actually see. Two readings
+     * assembled separately would eventually disagree, and a diagnostic that
+     * disagrees with the thing it describes is worse than none.
+     */
+    function prefetchGate(): PrefetchGate {
+      return {
+        now: Date.now(),
+        enabled: auto(),
+        // Capped by what the cache will actually keep: reading further ahead
+        // than that evicts the earliest pages before the reader reaches them,
+        // spending the request and the quota for nothing.
+        lookahead: effectiveLookahead(
+          settings.performance.prefetchLookahead,
+          settings.cache.maxPages,
+        ),
+        visible: document.visibilityState === 'visible',
+        foregroundWaiting: queue.length > 0,
+        inFlight: speculativeInFlight(),
+        // Several pages may be *prepared* at once so their crops leave in one
+        // Gemini request. Not a second rate knob — the gap between starts and
+        // the "nothing while hidden" rule are untouched, and the number of
+        // outbound requests goes down rather than up. See core/batch.ts.
+        batchSize: MAX_PAGES_PER_REQUEST,
+        consecutiveMisses: prefetchMisses,
+        lastStartAt: prefetchLastStart,
+      };
+    }
+
     function prefetchTick(): void {
       const cfg = profile.prefetch;
       if (!cfg) return;
@@ -594,34 +667,11 @@ export default defineContentScript({
         prefetchStats.adopted = 0;
       }
 
-      // One gate, both ways of naming a page. Whether the URL was read off the
-      // page or derived from another one changes nothing about how often, how
-      // many at a time, or whether at all — see core/prefetch.ts.
-      const gate: PrefetchGate = {
-        now: Date.now(),
-        enabled: auto(),
-        // Capped by what the cache will actually keep: reading further ahead
-        // than that evicts the earliest pages before the reader reaches them,
-        // spending the request and the quota for nothing.
-        lookahead: effectiveLookahead(settings.performance.prefetchLookahead, settings.cache.maxPages),
-        visible: document.visibilityState === 'visible',
-        foregroundWaiting: queue.length > 0,
-        inFlight: speculativeInFlight(),
-        // Several pages may be *prepared* at once so their crops leave in one
-        // Gemini request. Not a second rate knob — the gap between starts and
-        // the "nothing while hidden" rule are untouched, and the number of
-        // outbound requests goes down rather than up. See core/batch.ts.
-        batchSize: MAX_PAGES_PER_REQUEST,
-        consecutiveMisses: prefetchMisses,
-        lastStartAt: prefetchLastStart,
-      };
       prefetchStats.ticks++;
+      const gate = prefetchGate();
       const refusal = prefetchRefusal(gate);
       if (refusal) prefetchRefusals.set(refusal, (prefetchRefusals.get(refusal) ?? 0) + 1);
       else prefetchStats.allowed++;
-      // Before the early return, so the one case the old log could not see —
-      // permitted, running, and still falling behind — is the case it reports.
-      prefetchHeartbeat(gate, profile.pageNumber?.(url) ?? null);
       if (refusal) return;
 
       const target = fromPublished(cfg, gate) ?? fromPattern(cfg, url, gate);
@@ -958,6 +1008,9 @@ export default defineContentScript({
       if (observing) return;
       observing = true;
       startPrefetch();
+      // Deliberately not inside `startPrefetch`: the case worth reporting most
+      // is the one where the tick is *not* running.
+      startHeartbeat();
       mo.observe(document.documentElement, {
         childList: true,
         subtree: true,
@@ -979,6 +1032,7 @@ export default defineContentScript({
       io.disconnect();
       mo.disconnect();
       stopPrefetch();
+      stopHeartbeat();
       clearTimeout(rescanTimer);
       for (const job of Array.from(active.values())) cancel(job);
       queue.length = 0;
@@ -1090,7 +1144,29 @@ export default defineContentScript({
       );
     }
 
-    addEventListener('pagehide', () => stopPrefetch(), { once: true });
+    /**
+     * Stop while the document is away, and come back when it does.
+     *
+     * `pagehide` fires both when a document is torn down and when it is frozen
+     * into the back/forward cache, and this used to be `{ once: true }` with no
+     * counterpart. So a reader who pressed Back — on a paged reader, an ordinary
+     * thing to do — came back to a restored document whose prefetch timer had
+     * been cleared and which nothing would ever restart. The feature was off for
+     * the rest of that page's life, silently.
+     *
+     * `pageshow` with `persisted` is exactly the restore case, and the guards
+     * inside `startPrefetch` mean a document that was genuinely torn down never
+     * gets here at all.
+     */
+    addEventListener('pagehide', () => {
+      stopPrefetch();
+      stopHeartbeat();
+    });
+    addEventListener('pageshow', (e) => {
+      if (!(e as PageTransitionEvent).persisted || !observing) return;
+      startPrefetch();
+      startHeartbeat();
+    });
 
     // Nothing is observed, scanned or timed on a site the reader has not opted
     // in. The script stays resident only to answer the right-click menu and the

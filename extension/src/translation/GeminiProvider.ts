@@ -411,6 +411,18 @@ async function httpError(res: Response, model: string): Promise<PipelineError> {
       `เปิดหน้าตั้งค่าแล้วเปลี่ยนโมเดลเป็น gemini-flash-lite-latest`,
     );
   }
+  if (res.status >= 500) {
+    // Google's side, not the reader's and not their key's. Measured twice in
+    // two short reads on 2026-08-16: 503 "This model is currently experiencing
+    // high demand". It used to fall through to UNKNOWN, whose hint asks the
+    // reader to open the console and check their setup — advice that is both
+    // useless and untrue when the fault is upstream and will clear on its own.
+    //
+    // Distinct from QUOTA_EXCEEDED, which looks similar from the reader's chair
+    // but is not: quota is spent and needs waiting out or another key, whereas
+    // this page will very likely work if asked again straight away.
+    return new PipelineError('PROVIDER_BUSY', `Gemini HTTP ${res.status}: ${detail.slice(0, 200)}`);
+  }
   return new PipelineError('UNKNOWN', `Gemini HTTP ${res.status}: ${detail.slice(0, 200)}`);
 }
 

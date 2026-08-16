@@ -13,6 +13,7 @@ import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
 import { normalizeSiteList } from '../core/site-scope';
 import type { SourceLang, TargetLang } from './lang';
+import type { LangCode } from '../types';
 
 export type { ApiKeyEntry };
 
@@ -196,8 +197,29 @@ export interface Settings {
    */
   cache: CacheLimits;
 
-  /** Remembered per gallery/series, so an auto-detected language is paid for once. */
-  perSet: Record<string, { source?: SourceLang; enabled?: boolean }>;
+  /**
+   * Remembered per gallery/series, so an auto-detected language is paid for once.
+   *
+   * `source` is the working language; the two fields under it are the evidence
+   * behind it. Keeping the evidence rather than only the verdict is what stops a
+   * gallery whose pages are genuinely mixed from overwriting its own memory on
+   * every page and buying a re-read each time — see core/lang-memory.ts.
+   *
+   * All optional, and absent on every record written before they existed, which
+   * is why they need no migration: an old record simply has no evidence yet and
+   * starts accumulating it on the next page read.
+   */
+  perSet: Record<
+    string,
+    {
+      source?: SourceLang;
+      enabled?: boolean;
+      /** Pages of this set that read as each script. */
+      langCounts?: Partial<Record<LangCode, number>>;
+      /** Re-reads already spent correcting this set's language. */
+      langRereads?: number;
+    }
+  >;
 }
 
 export const DEFAULT_SETTINGS: Settings = {

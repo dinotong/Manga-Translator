@@ -15,6 +15,8 @@ export type ErrCode =
   /** Every configured key is out of daily quota. Distinct from one key failing. */
   | 'ALL_KEYS_EXHAUSTED'
   | 'PROVIDER_REFUSED'
+  /** Gemini itself is overloaded (5xx). Transient, upstream, and not the key's fault. */
+  | 'PROVIDER_BUSY'
   | 'OFFLINE'
   | 'ACQUIRE_FAILED'
   | 'MODEL_LOAD_FAILED'
@@ -55,6 +57,7 @@ export const HINTS_TH: Record<ErrCode, string> = {
   ALL_KEYS_EXHAUSTED:
     'โควตารายวันหมดครบทุก key แล้ว — เพิ่ม key สำรองในหน้าตั้งค่า หรือรอจนถึงเวลารีเซ็ต (เที่ยงคืนเวลาแปซิฟิก)',
   PROVIDER_REFUSED: 'Gemini ปฏิเสธหน้านี้ — ลองกดแปลใหม่ ระบบจะแยกส่งทีละกล่อง',
+  PROVIDER_BUSY: 'ฝั่ง Gemini แน่นอยู่ (คนใช้เยอะ) — ไม่ใช่โควตาคุณหมด รอสักครู่แล้วกดแปลใหม่',
   OFFLINE: 'ต่อเน็ตไม่ได้ — ตรวจการเชื่อมต่อแล้วลองใหม่',
   ACQUIRE_FAILED: 'ดึงไฟล์รูปไม่สำเร็จ — เว็บอาจบล็อกหรือรูปยังโหลดไม่เสร็จ ลองรีเฟรชหน้า',
   MODEL_LOAD_FAILED: 'โหลดโมเดลตรวจจับข้อความไม่สำเร็จ — เช็คอินเทอร์เน็ตแล้วกด "ตรวจสอบระบบ" ในหน้าตั้งค่า',

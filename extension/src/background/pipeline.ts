@@ -7,6 +7,7 @@ import {
   servesGrouping,
   translationKey,
 } from '../cache/db';
+import { observePage } from '../core/lang-memory';
 import { planMerges } from '../core/merge-proposals';
 import { detectScript } from '../core/script';
 import type { RoutedGroup } from '../core/batch';
@@ -205,14 +206,16 @@ export async function runJob(
   // The model has just handed back `src` for every crop, so the script is in
   // hand for the cost of reading it. See core/script.ts, D-038.
   const learned = await learnSource(settings, source.setKey, from, items);
-  if (learned && !reread) {
-    log.info(`page reads as ${learned}, not ${from} — re-running this page`);
-    onProgress('detect', `ตรวจพบภาษา ${learned} — อ่านใหม่รอบเดียว`);
+  if (learned.reread && !reread) {
+    log.info(`page reads as ${learned.reread}, not ${from} — re-running this page`);
+    onProgress('detect', `ตรวจพบภาษา ${learned.reread} — อ่านใหม่รอบเดียว`);
     // Re-read rather than carry on. Everything downstream of detection was
     // computed under the wrong direction rules, so finishing this page would
     // cache geometry we already know is wrong under a key we would then never
-    // revisit. One extra request, once per gallery.
-    return runJob(source, await withSource(settings, source.setKey, learned), onProgress, signal, true);
+    // revisit. Capped at one per gallery by core/lang-memory.ts — a set whose
+    // pages are genuinely mixed can never buy a second one, however often the
+    // script changes under it.
+    return runJob(source, learned.settings, onProgress, signal, true);
   }
 
   /* ---- 5. believe the model's grouping only where geometry agrees ---- */
@@ -416,12 +419,16 @@ function effectiveSource(settings: Settings, setKey: string | null): SourceLang 
 }
 
 /**
- * Read the page's script off the reply, remember it for the set, and say so if
- * it disagrees with what this page was processed as.
+ * Read the page's script off the reply, fold it into what the set already knew,
+ * and say whether this page should be thrown away and read again.
  *
- * Returns the language only when it is *different* from what was used, because
- * that is the only case worth acting on. Agreement is still written down — that
- * is what stops every page of a gallery paying for the same question.
+ * The deciding is all in core/lang-memory.ts, which is pure and tested against a
+ * gallery that oscillates. What lives here is only the I/O around it: pulling
+ * the evidence out of settings, and writing the updated evidence back.
+ *
+ * The returned settings carry the new working language, so the re-read runs
+ * under it — and so does the rest of the gallery, whether or not a re-read was
+ * bought.
  *
  * Only under `auto`. A reader who picked a language is not overruled by us,
  * whatever the page looks like; if they picked wrong, the fix is the setting
@@ -432,38 +439,53 @@ async function learnSource(
   setKey: string | null,
   used: SourceLang,
   items: readonly ({ src: string; out: string } | null)[],
-): Promise<LangCode | null> {
-  if (settings.lang.source !== 'auto' || !setKey) return null;
+): Promise<{ settings: Settings; reread: LangCode | null }> {
+  const unchanged = { settings, reread: null };
+  if (settings.lang.source !== 'auto' || !setKey) return unchanged;
   const detected = detectScript(items.map((i) => i?.src ?? '').join('\n'));
-  if (!detected) return null;
+  if (!detected) return unchanged;
 
-  const known = settings.perSet[setKey]?.source;
-  if (known !== detected) {
-    try {
-      await withSource(settings, setKey, detected);
-    } catch (err) {
-      // Not fatal: the worst case is asking the same question again next page.
-      log.warn(`could not remember detected language: ${String(err)}`);
-    }
+  const memory = settings.perSet[setKey];
+  const incumbent = memory?.source && memory.source !== 'auto' ? memory.source : null;
+  const decision = observePage(
+    { counts: memory?.langCounts, rereads: memory?.langRereads },
+    incumbent,
+    detected,
+    // `used` is 'auto' on the very first page of a set, and resolveDetectionLang
+    // turns that into 'ja' for every geometric decision — so 'auto' and a
+    // detected 'ja' are the same processing and need no re-read.
+    resolveDetectionLang(used),
+  );
+
+  if (decision.working !== incumbent) {
+    log.info(
+      `set ${setKey} reads as ${decision.working} ` +
+        `(${Object.entries(decision.counts)
+          .map(([k, n]) => `${k}:${n}`)
+          .join(' ')})`,
+    );
   }
-  // `used` is 'auto' on the very first page of a set, and resolveDetectionLang
-  // turns that into 'ja' for every geometric decision — so 'auto' and a detected
-  // 'ja' are the same processing and need no re-read.
-  const wasTreatedAs = resolveDetectionLang(used);
-  return detected === wasTreatedAs ? null : detected;
+
+  const next = await rememberSet(settings, setKey, {
+    source: decision.working,
+    langCounts: decision.counts,
+    langRereads: decision.rereads,
+  });
+  return { settings: next, reread: decision.reread ? decision.working : null };
 }
 
-/** `settings` with this set's source language pinned, saved and returned. */
-async function withSource(
+/** `settings` with this set's record patched, saved and returned. */
+async function rememberSet(
   settings: Settings,
-  setKey: string | null,
-  lang: LangCode,
+  setKey: string,
+  patch: Settings['perSet'][string],
 ): Promise<Settings> {
-  if (!setKey) return settings;
-  const perSet = { ...settings.perSet, [setKey]: { ...settings.perSet[setKey], source: lang } };
+  const perSet = { ...settings.perSet, [setKey]: { ...settings.perSet[setKey], ...patch } };
   try {
     return await saveSettings({ perSet });
-  } catch {
+  } catch (err) {
+    // Not fatal: the worst case is asking the same question again next page.
+    log.warn(`could not remember detected language: ${String(err)}`);
     return { ...settings, perSet };
   }
 }
