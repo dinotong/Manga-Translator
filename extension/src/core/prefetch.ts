@@ -41,15 +41,59 @@
  */
 
 export const MIN_PREFETCH_GAP_MS = 500;
-export const MAX_LOOKAHEAD = 10;
+
+/**
+ * The deepest lookahead the reader may ask for.
+ *
+ * Raised from 10 because "read the whole chapter ahead" is a thing the owner
+ * actually wants, and 10 could not express it — the measured galleries run to 40
+ * pages and chapters elsewhere run longer. There is still a ceiling, because an
+ * unbounded value in storage would become an unbounded number of requests to
+ * somebody else's server, and `pickPrefetch` already stops at the gallery's real
+ * last page anyway, so the cap only ever binds on a book longer than this.
+ *
+ * Depth is not rate. Every politeness rule below is untouched by how deep this
+ * goes: one speculative request in flight, a minimum gap between starts, nothing
+ * while the tab is hidden. A deeper setting means the reader is read *further*
+ * ahead over time, never that more is fired at once.
+ */
+export const MAX_LOOKAHEAD = 200;
+
+/** What the Options page offers as "the whole chapter". */
+export const LOOKAHEAD_WHOLE_CHAPTER = MAX_LOOKAHEAD;
+
 /** Consecutive failed guesses in one gallery before giving up on it. */
 export const MAX_CONSECUTIVE_MISSES = 2;
 
-/** 0 disables prefetch entirely; anything outside 0..10 is a mistake, not a wish. */
+/** 0 disables prefetch entirely; anything outside 0..MAX_LOOKAHEAD is a mistake, not a wish. */
 export function clampLookahead(value: unknown): number {
   const n = Math.round(Number(value));
   if (!Number.isFinite(n)) return 0;
   return Math.min(MAX_LOOKAHEAD, Math.max(0, n));
+}
+
+/**
+ * How far ahead we may actually read, given how much the cache will hold.
+ *
+ * These two settings can contradict each other, and the contradiction is
+ * expensive and completely invisible: prefetching 40 pages into a cache that
+ * holds 20 evicts the earliest guesses before the reader reaches them, so the
+ * request, the free-tier quota and the GPU pass are all spent for nothing and
+ * the reader still sees "กำลังอ่านภาพ…" on a page the extension already
+ * finished.
+ *
+ * Resolving it here — against the depth the reader *chose* — rather than by
+ * forcing a floor under the cache is what keeps both settings usable. Tying the
+ * cache floor to `MAX_LOOKAHEAD` instead would mean that raising the ceiling so
+ * "the whole chapter" could be expressed silently forbade every reader from
+ * choosing a small cache, whether or not they prefetch at all.
+ *
+ * `- 1` because the page being read occupies a cache slot of its own.
+ */
+export function effectiveLookahead(configured: unknown, cachePages: number): number {
+  const asked = clampLookahead(configured);
+  if (!Number.isFinite(cachePages)) return asked;
+  return Math.max(0, Math.min(asked, Math.floor(cachePages) - 1));
 }
 
 export interface PrefetchInput {
@@ -69,8 +113,21 @@ export interface PrefetchInput {
    * nobody.
    */
   foregroundWaiting: boolean;
-  /** Speculative requests currently outstanding. */
+  /** Speculative pages currently being worked on. */
   inFlight: number;
+  /**
+   * How many speculative pages may be in flight at once.
+   *
+   * This is *not* a second rate knob. It exists because crops from several pages
+   * now ride in one Gemini request (see core/batch.ts), and a batch cannot form
+   * if only one page is ever being prepared — the reason to allow a second and a
+   * third is precisely so they leave together rather than separately. Requests
+   * to the reader's own site are still spaced by MIN_PREFETCH_GAP_MS, and the
+   * number of outbound Gemini requests goes *down*, not up.
+   *
+   * Defaults to 1, which is the behaviour this had before batching existed.
+   */
+  batchSize?: number;
   /** Guesses that came back as "no such image", in a row, in this gallery. */
   consecutiveMisses: number;
   /** Timestamp the last speculative request started, or 0. */
@@ -95,7 +152,7 @@ export function pickPrefetch(input: PrefetchInput): number | null {
   if (!input.visible) return null;
   if (input.consecutiveMisses >= MAX_CONSECUTIVE_MISSES) return null;
   if (input.foregroundWaiting) return null;
-  if (input.inFlight > 0) return null;
+  if (input.inFlight >= Math.max(1, input.batchSize ?? 1)) return null;
   if (input.now - input.lastStartAt < MIN_PREFETCH_GAP_MS) return null;
   if (input.currentPage === null || !Number.isFinite(input.currentPage)) return null;
 

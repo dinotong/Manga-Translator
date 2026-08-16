@@ -1,4 +1,3 @@
-import { MAX_LOOKAHEAD } from './prefetch';
 
 /**
  * How much reading the cache keeps, and which records go when it is full.
@@ -17,15 +16,22 @@ import { MAX_LOOKAHEAD } from './prefetch';
  *
  * Both are honoured on every eviction pass: whichever binds first wins.
  *
- * ### Why the page floor is what it is
+ * ### Why the page floor is what it is, and where the prefetch guard went
  *
- * Prefetch translates up to `MAX_LOOKAHEAD` pages ahead of the reader. A cache
- * that holds fewer pages than that evicts the earliest guess before the reader
- * ever arrives at it, so the request, the quota and the GPU pass are all spent
- * for nothing — and the reader sees "กำลังอ่านภาพ…" on a page the extension
- * already finished. Refusing to go below `MAX_LOOKAHEAD + 1` makes that
- * contradiction impossible to configure rather than merely unlikely, which is
- * why the floor lives here instead of in a warning nobody reads.
+ * Prefetch translates pages ahead of the reader. A cache that holds fewer pages
+ * than the lookahead evicts the earliest guess before the reader ever arrives at
+ * it, so the request, the quota and the GPU pass are all spent for nothing — and
+ * the reader sees "กำลังอ่านภาพ…" on a page the extension already finished. That
+ * contradiction is still made impossible rather than merely unlikely, but it is
+ * resolved against the depth the reader *chose*, in
+ * `effectiveLookahead` (core/prefetch.ts), not by a floor here.
+ *
+ * The floor used to be `MAX_LOOKAHEAD + 1`. That was right while the lookahead
+ * ceiling was 10 and became wrong the moment it was raised to 200 so "read the
+ * whole chapter ahead" could be expressed: it would have silently forbidden
+ * every reader from choosing a small cache, including readers with prefetch
+ * switched off entirely. The floor below is now just a floor — small enough not
+ * to dictate anything, large enough that eviction cannot thrash.
  *
  * ### Why the arithmetic is here and not in cache/stores.ts
  *
@@ -39,10 +45,18 @@ import { MAX_LOOKAHEAD } from './prefetch';
 export const BYTES_PER_PAGE_ESTIMATE = 4096;
 
 /**
- * Never fewer pages than prefetch reads ahead, plus the page being read.
- * See the note above: below this the two settings actively fight each other.
+ * The smallest cache worth having.
+ *
+ * The same number this floor has always had — only what it is *derived from* has
+ * changed. It used to be written as `MAX_LOOKAHEAD + 1`, which stopped being a
+ * sane floor the moment that ceiling was raised to 200 so "read the whole chapter
+ * ahead" could be expressed; the prefetch interaction now binds against the depth
+ * the reader chose, in `effectiveLookahead` (core/prefetch.ts). Eleven pages
+ * costs about 45 KB at the measured record size, so it constrains nobody — it
+ * exists so a reader who drags the control to the bottom still gets a cache that
+ * survives a page turn rather than one that evicts the page they came from.
  */
-export const MIN_CACHE_PAGES = MAX_LOOKAHEAD + 1;
+export const MIN_CACHE_PAGES = 11;
 
 /**
  * Long enough for any gallery the target sites serve. At the measured record

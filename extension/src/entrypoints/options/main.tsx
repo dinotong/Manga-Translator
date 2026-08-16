@@ -8,7 +8,14 @@ import {
   MAX_CACHE_PAGES,
   MIN_CACHE_PAGES,
 } from '../../core/cache-budget';
-import { clampLookahead, MAX_LOOKAHEAD } from '../../core/prefetch';
+import {
+  clampLookahead,
+  effectiveLookahead,
+  LOOKAHEAD_WHOLE_CHAPTER,
+  MAX_LOOKAHEAD,
+} from '../../core/prefetch';
+import { clampInFlight, MAX_IN_FLIGHT_CEILING } from '../../core/scheduling';
+import { MAX_PAGES_PER_REQUEST } from '../../core/batch';
 import {
   type ApiKeyEntry,
   keyFingerprint,
@@ -491,8 +498,32 @@ function Options() {
       <section>
         <h2>แปลล่วงหน้า</h2>
         <label>
-          อ่านล่วงหน้า {s.performance.prefetchLookahead === 0 ? 'ปิด' : `${s.performance.prefetchLookahead} หน้า`}
+          อ่านล่วงหน้า{' '}
+          {s.performance.prefetchLookahead === 0
+            ? 'ปิด'
+            : s.performance.prefetchLookahead >= LOOKAHEAD_WHOLE_CHAPTER
+              ? 'ทั้งตอน'
+              : `${s.performance.prefetchLookahead} หน้า`}
         </label>
+        <div class="row">
+          {[
+            { label: 'ปิด', pages: 0 },
+            { label: '3 หน้า', pages: 3 },
+            { label: '10 หน้า', pages: 10 },
+            { label: '40 หน้า', pages: 40 },
+            { label: 'ทั้งตอน', pages: LOOKAHEAD_WHOLE_CHAPTER },
+          ].map((p) => (
+            <button
+              key={p.pages}
+              class={s.performance.prefetchLookahead === p.pages ? 'primary' : undefined}
+              onClick={() =>
+                void patch({ performance: { ...s.performance, prefetchLookahead: p.pages } })
+              }
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <input
           type="range" min="0" max={String(MAX_LOOKAHEAD)} step="1"
           value={String(s.performance.prefetchLookahead)}
@@ -507,15 +538,47 @@ function Options() {
         />
         <p class="hint">
           แปลหน้าถัดๆ ไปไว้ล่วงหน้าขณะที่คุณยังอ่านหน้านี้ พอกดหน้าถัดไปคำแปลจะขึ้นทันที ·
-          <b>0 = ปิด</b> · ทำงานเฉพาะตอนเปิด “แปลอัตโนมัติ”
+          <b>0 = ปิด</b> · <b>ทั้งตอน</b> = อ่านล่วงหน้าไปจนจบเล่ม (สูงสุด {MAX_LOOKAHEAD} หน้า) ·
+          ทำงานเฉพาะตอนเปิด “แปลอัตโนมัติ”
         </p>
         <p class="hint">
-          ยิงทีละคำขอ เว้นอย่างน้อย 0.5 วินาที และ<b>หยุดทันทีที่สลับไปแท็บอื่น</b> —
-          เพื่อไม่ให้รบกวนเซิร์ฟเวอร์ของเว็บที่เราไปอ่าน
+          <b>ตั้งลึกขึ้น = ไปได้ไกลขึ้น ไม่ใช่ยิงถี่ขึ้น</b> — ยังคงยิงทีละคำขอ เว้นอย่างน้อย 0.5 วินาที
+          และ<b>หยุดทันทีที่สลับไปแท็บอื่น</b> เพื่อไม่ให้รบกวนเซิร์ฟเวอร์ของเว็บที่เราไปอ่าน ·
+          หน้าที่คุณกำลังดูอยู่ได้คิวก่อนการเดาเสมอ
           · ใช้ได้เฉพาะเว็บที่เดา URL หน้าถัดไปได้ (imhentai) · MangaDex สร้าง URL ในโค้ดของตัวเอง จึงเดาไม่ได้และไม่ทำ
         </p>
+        {effectiveLookahead(s.performance.prefetchLookahead, s.cache.maxPages) <
+          s.performance.prefetchLookahead && (
+          <p class="hint warn">
+            แคชเก็บได้ {s.cache.maxPages} หน้า จึงอ่านล่วงหน้าได้จริง{' '}
+            <b>{effectiveLookahead(s.performance.prefetchLookahead, s.cache.maxPages)} หน้า</b> —
+            ถ้าอ่านล่วงหน้าเกินขนาดแคช หน้าแรกๆ จะถูกลบทิ้งก่อนคุณอ่านถึง เสียทั้งคำขอและโควตา ·
+            เพิ่มขนาดแคชด้านล่างถ้าอยากได้ลึกกว่านี้
+          </p>
+        )}
         <p class="hint">
-          จำนวนคำขอรวมเท่าเดิม (1 หน้า = 1 คำขอ) แต่ถ้าเลิกอ่านกลางคัน หน้าที่แปลไว้ล่วงหน้าจะเสียเปล่า
+          ตอนนี้ส่ง crop ของหลายหน้าไปใน<b>คำขอเดียว</b> (สูงสุด {MAX_PAGES_PER_REQUEST} หน้า) —
+          แปลได้เร็วขึ้นโดย<b>ไม่กินโควตาต่อนาทีเพิ่ม</b> · แต่ถ้าเลิกอ่านกลางคัน หน้าที่แปลไว้ล่วงหน้าจะเสียเปล่า
+        </p>
+
+        <label>งานพร้อมกัน {s.performance.maxConcurrentRequests} งาน</label>
+        <input
+          type="range" min="1" max={String(MAX_IN_FLIGHT_CEILING)} step="1"
+          value={String(s.performance.maxConcurrentRequests)}
+          onInput={(e) =>
+            void patch({
+              performance: {
+                ...s.performance,
+                maxConcurrentRequests: clampInFlight((e.target as HTMLInputElement).value),
+              },
+            })
+          }
+        />
+        <p class="hint">
+          หนึ่งงาน = โหลดรูป + หากล่องข้อความ + ส่งให้ Gemini · วัดจริงแล้ว <b>97% ของเวลาคือรอ Gemini ตอบ</b>
+          (0.1–0.5 วินาทีหากล่อง เทียบกับ 1.3–41 วินาทีรอเน็ต) จึงทำหลายงานพร้อมกันได้ ·
+          <b>การหากล่องยังทำทีละรูป</b>เสมอ เพราะ ONNX session ใช้ซ้อนกันไม่ได้ ·
+          หนึ่งช่องถูกกันไว้ให้หน้าที่คุณกำลังดูเสมอ การเดาจะไม่มีวันแย่งไปหมด
         </p>
       </section>
 
@@ -566,8 +629,9 @@ function Options() {
           ตอนหนึ่งของ MangaDex ปกติ 20–45 หน้า
         </p>
         <p class="hint">
-          ต่ำสุด {MIN_CACHE_PAGES} หน้า เพราะ<b>ต้องไม่น้อยกว่าจำนวนหน้าที่แปลล่วงหน้าได้สูงสุด</b> ({MAX_LOOKAHEAD}) —
-          ถ้าแคชเล็กกว่านั้น หน้าที่แปลล่วงหน้าจะถูกลบทิ้งก่อนคุณอ่านถึง เสียทั้งคำขอและโควตาฟรีๆ
+          ต่ำสุด {MIN_CACHE_PAGES} หน้า · <b>ขนาดแคชเป็นตัวจำกัดว่าจะอ่านล่วงหน้าได้ลึกแค่ไหน</b> —
+          อ่านล่วงหน้าเกินขนาดแคช หน้าแรกๆ จะถูกลบทิ้งก่อนคุณอ่านถึง เสียทั้งคำขอและโควตาฟรีๆ
+          จึงตัดให้เหลือเท่าที่แคชรับไหวโดยอัตโนมัติ
           {s.performance.prefetchLookahead > 0 && (
             <> · ตอนนี้ตั้งอ่านล่วงหน้าไว้ {s.performance.prefetchLookahead} หน้า</>
           )}

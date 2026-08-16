@@ -6,6 +6,7 @@ import {
   normalizeCacheLimits,
 } from '../core/cache-budget';
 import { clampLookahead } from '../core/prefetch';
+import { clampInFlight, DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
 import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
 import { normalizeSiteList } from '../core/site-scope';
@@ -115,10 +116,28 @@ export interface Settings {
   };
 
   performance: {
-    /** Pages to translate ahead of the reader. 0 disables it; capped at 10. */
+    /**
+     * Pages to translate ahead of the reader. 0 disables it.
+     *
+     * Capped at MAX_LOOKAHEAD, which is deliberately large enough to express
+     * "the whole chapter" — the politeness rules that bound the *rate* live in
+     * core/prefetch.ts and do not read this value at all.
+     */
     prefetchLookahead: number;
-    /** Locked at 1: detection is CPU/GPU bound and parallelism only adds jank. */
+    /**
+     * Locked at 1: ONNX sessions are not re-entrant (D-013), so two detections
+     * at once fail outright. This has never been about jank.
+     */
     maxConcurrentOcr: 1;
+    /**
+     * Whole jobs in flight at once.
+     *
+     * Separate from `maxConcurrentOcr` because they bound different things, and
+     * conflating them is what limited throughput to 2 images/minute: a job is
+     * 126-481 ms of detection and 1.3-41 s of waiting on Gemini, and only the
+     * first of those has to happen alone. See core/scheduling.ts.
+     */
+    maxConcurrentRequests: number;
   };
 
   /**
@@ -169,7 +188,11 @@ export const DEFAULT_SETTINGS: Settings = {
     boxOpacity: 0.92,
     peekOnHover: true,
   },
-  performance: { prefetchLookahead: 3, maxConcurrentOcr: 1 },
+  performance: {
+    prefetchLookahead: 3,
+    maxConcurrentOcr: 1,
+    maxConcurrentRequests: DEFAULT_MAX_IN_FLIGHT,
+  },
   cache: { maxPages: DEFAULT_CACHE_PAGES, maxBytes: DEFAULT_CACHE_BYTES },
   perSet: {},
 };
@@ -274,10 +297,13 @@ export function hydrate(stored: unknown): Settings {
       ...d.performance,
       ...s.performance,
       maxConcurrentOcr: 1,
-      // Clamped on read, not only on write: this value decides how many requests
-      // go to someone else's server, and a hand-edited storage entry must not be
-      // able to raise it.
+      // Clamped on read, not only on write: these values decide how many
+      // requests go to someone else's server, and a hand-edited storage entry
+      // must not be able to raise them.
       prefetchLookahead: clampLookahead(s.performance?.prefetchLookahead ?? d.performance.prefetchLookahead),
+      maxConcurrentRequests: clampInFlight(
+        s.performance?.maxConcurrentRequests ?? d.performance.maxConcurrentRequests,
+      ),
     },
     // v3 -> v4 is just this line: a record saved before the setting existed has
     // no `cache` field, and normalize fills in both halves. Clamped on read for

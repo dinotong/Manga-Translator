@@ -37,10 +37,12 @@ function pages(n: number, bytes = 4000, start = 1_000): CacheEntry[] {
 const LIMITS: CacheLimits = { maxPages: 20, maxBytes: 100 * MB };
 
 describe('clampCachePages', () => {
-  it('never lets the cache hold less than prefetch reads ahead', () => {
-    // The whole point of the floor: a cache smaller than the lookahead evicts
-    // pages that were fetched for a reader who has not reached them yet.
-    expect(MIN_CACHE_PAGES).toBeGreaterThan(MAX_LOOKAHEAD);
+  it('never lets the cache fall below a usable floor', () => {
+    // The prefetch interaction it used to guard here now lives in
+    // effectiveLookahead(), against the depth the reader actually chose — see
+    // the note in cache-budget.ts. This floor only keeps a cache big enough to
+    // survive a page turn.
+    expect(MIN_CACHE_PAGES).toBeGreaterThan(1);
     expect(clampCachePages(1)).toBe(MIN_CACHE_PAGES);
     expect(clampCachePages(0)).toBe(MIN_CACHE_PAGES);
     expect(clampCachePages(-40)).toBe(MIN_CACHE_PAGES);
