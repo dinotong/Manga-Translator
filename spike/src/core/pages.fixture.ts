@@ -93,6 +93,53 @@ export const PAGES: FixturePage[] = [
   },
   {
     /**
+     * The page D-037 is about: three separate speech balloons abreast in the
+     * upper half of one panel, English comic lettering, different beats of one
+     * conversation. The model called them one sentence and the veto agreed.
+     *
+     * Built in pixels first, because every number here has to be a measurement
+     * of a plausible page rather than a value chosen to make a point:
+     *
+     *   page          1600 x 2400, an ordinary scan width for a Latin comic
+     *   lettering     30 px cap-height ink boxes, 42 px line pitch — comic
+     *                 lettering is set tight, around 1.4x cap height
+     *   balloons      two lines each, 150/190/160 px of text wide, so each text
+     *                 block is 72 px tall: "WHERE'D / HE GO?", that shape
+     *   spacing       100 px of balloon outline and white between one block of
+     *                 text and the next, which is a normally lettered panel
+     *   stagger       balloons sit at slightly different heights, as they do
+     *
+     * Why every check passes, which is the whole point of writing it down:
+     * glyph is 30/1600, so the fragment limit of 2.5 glyphs across allows a
+     * block 75 px tall and these are 72 — a two-line balloon reads as a
+     * fragment. The 100 px gaps are inside the relaxed reach of 108 px. The
+     * union is 700x112 px against 500x72 of text, which is a slack of 2.2 and
+     * 1.7% of the page in swallowed artwork. Nothing here is contrived; it is
+     * an ordinary panel.
+     */
+    name: 'latin-balloons-abreast',
+    natural: { w: 1600, h: 2400 },
+    blocks: [
+      // x/w over 1600, y/h over 2400, glyph over 1600 — see FixtureBlock.
+      {
+        rect: { x: 150 / 1600, y: 210 / 2400, w: 150 / 1600, h: 72 / 2400 },
+        direction: 'horizontal',
+        glyph: 30 / 1600,
+      },
+      {
+        rect: { x: 400 / 1600, y: 250 / 2400, w: 190 / 1600, h: 72 / 2400 },
+        direction: 'horizontal',
+        glyph: 30 / 1600,
+      },
+      {
+        rect: { x: 690 / 1600, y: 215 / 2400, w: 160 / 1600, h: 72 / 2400 },
+        direction: 'horizontal',
+        glyph: 30 / 1600,
+      },
+    ],
+  },
+  {
+    /**
      * The page that started all of this: an afterword. Freeform vertical
      * handwriting over the artwork, one sentence running down four columns of
      * uneven length that start at different heights, plus a separate short note

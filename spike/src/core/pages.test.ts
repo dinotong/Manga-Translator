@@ -78,6 +78,7 @@ describe('ordinary pages · panel layout', () => {
     'mangadex-dense-13': { moved: 0, trimmed: 0, crowded: 0 },
     'imhentai-two': { moved: 0, trimmed: 0, crowded: 0 },
     'latin-horizontal': { moved: 0, trimmed: 0, crowded: 0 },
+    'latin-balloons-abreast': { moved: 0, trimmed: 0, crowded: 0 },
     'afterword-handwritten': { moved: 6, trimmed: 2, crowded: 0 },
   };
 
@@ -134,6 +135,25 @@ describe('ordinary pages · model grouping', () => {
       }
     },
   );
+
+  /**
+   * D-037. The owner was reading an English page normally and three separate
+   * balloons in one panel came back as a single translation, stretched across
+   * all three, with the other two left blank.
+   *
+   * The measured reason is `maxFragmentGlyphs`. It asks whether a block is at
+   * most 2.5 glyphs across the reading axis — for vertical text, at most 2.5
+   * columns wide, which is a stray column rather than a bubble. Across the
+   * reading axis of *horizontal* text is the direction lines stack, so the same
+   * quantity counts lines: a two-line balloon measures about 2.4 and passes as
+   * a fragment. And no other value would help, because a one-line fragment of a
+   * sentence and a one-line balloon are the same rectangle.
+   */
+  it('refuses to fuse a row of English balloons into one sentence', () => {
+    const page = PAGES.find((p) => p.name === 'latin-balloons-abreast')!;
+    const plan = planMerges(page.blocks, [{ members: [0, 1, 2] }], aspectOf(page));
+    expect(plan.accepted).toEqual([]);
+  });
 
   it('accepts the afterword run the automatic thresholds refused', () => {
     const page = PAGES.find((p) => p.name === 'afterword-handwritten')!;

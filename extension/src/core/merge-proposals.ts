@@ -33,6 +33,8 @@ import { GROUPING_DEFAULTS } from './grouping';
  * checks are chosen to bound the blast radius to the failure actually being
  * fixed:
  *
+ *   - **Vertical text only.** See below; this is the one that decides the
+ *     others are even askable.
  *   - **Near already.** Both gaps, along and across the reading axis, must be
  *     inside a bounded relaxation of the thresholds `grouping.ts` already uses.
  *     Blocks at opposite ends of the page never merge, however confident the
@@ -49,6 +51,38 @@ import { GROUPING_DEFAULTS } from './grouping';
  *
  * Rejecting a proposal costs nothing: the blocks stay exactly as `grouping.ts`
  * left them, which is today's behaviour.
+ *
+ * ## Why only vertical text (D-037)
+ *
+ * The list above shipped defaulted on and let a real page through. Three
+ * separate speech balloons abreast in one English panel — different beats of a
+ * conversation — were merged, and one balloon's Thai was drawn across all
+ * three while the others stayed blank. The exact failure the checks were
+ * written to prevent, on the kind of page the owner mostly reads.
+ *
+ * The measured reason is the **fragments only** check, and it is not a
+ * threshold that was set too loosely. "At most 2.5 glyphs across the reading
+ * axis" is, for vertical text, "at most two and a half columns wide", and a
+ * printed Japanese bubble is three or more columns because vertical text in a
+ * round balloon wraps into many short ones. Across the reading axis of
+ * *horizontal* text is the direction the lines stack, so the same quantity
+ * counts **lines**, and an English balloon of two lines measures about 2.4.
+ * The commonest shape of the thing the check exists to exclude scores as the
+ * thing it exists to admit.
+ *
+ * No other number fixes that, which is why this is a restriction and not a
+ * tightening. A fragment of a horizontal sentence is a row of text; a short
+ * complete balloon is also a row of text; they are the same rectangle. There is
+ * nothing in the geometry to tell them apart, so there is no honest horizontal
+ * form of the check that protects the adjacent-speakers case.
+ *
+ * And nothing is lost that this was built for. The case is a sentence running
+ * down several columns of freehand vertical Japanese with no balloon around it,
+ * where the columns start at different heights and defeat `grouping.ts`'s
+ * overlap test. That case is vertical by construction. Latin text is set in
+ * rows whose left edges line up, which is the arrangement `grouping.ts` already
+ * handles — so horizontal text was never the reason this file exists, only the
+ * place it did damage.
  */
 
 /** A detected block, as much of it as this decision needs. */
@@ -93,6 +127,7 @@ export type MergeRejection =
   | 'bad-index'
   | 'already-merged'
   | 'mixed-direction'
+  | 'not-vertical'
   | 'glyph-mismatch'
   | 'not-a-fragment'
   | 'not-adjacent'
@@ -132,9 +167,14 @@ export interface MergeLimits {
   /**
    * Widest a member may be across the reading axis, in glyphs.
    *
-   * The line between a fragment and a bubble. Under-merging leaves single
-   * columns, occasionally a pair that did group; a printed bubble is three or
-   * more. 2.5 sits in that gap.
+   * Vertical text only, and that is not incidental — across the reading axis of
+   * vertical text is *width*, so this is a count of columns. Under-merging
+   * leaves single columns, occasionally a pair that did group; a printed bubble
+   * is three or more. 2.5 sits in that gap.
+   *
+   * The same arithmetic on horizontal text counts lines instead, where two is
+   * an ordinary whole balloon, which is why horizontal proposals are refused
+   * outright rather than measured against this. See the header, D-037.
    */
   maxFragmentGlyphs: number;
   /**
@@ -226,6 +266,9 @@ function veto(
   const parts = members.map((m) => blocks[m]!);
   const direction = parts[0]!.direction;
   if (parts.some((p) => p.direction !== direction)) return 'mixed-direction';
+  // Before any measurement, because on horizontal text the measurements below
+  // cannot answer the question they are asked. See the header, D-037.
+  if (direction !== 'vertical') return 'not-vertical';
 
   const glyphs = parts.map((p) => p.glyph);
   if (glyphs.some((g) => !Number.isFinite(g) || g <= 0)) return 'glyph-mismatch';

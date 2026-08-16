@@ -70,6 +70,47 @@ describe('planMerges', () => {
     expect(planMerges(blocks, [p(0, 1)], ASPECT).rejected[0]!.reason).toBe('not-a-fragment');
   });
 
+  /**
+   * D-037, the failure that took this from "on by default" to "opt-in and
+   * vertical only". Three English balloons abreast in one panel, two lines of
+   * lettering each, ordinary spacing — merged, and one balloon's translation
+   * drawn across all three.
+   *
+   * Every other check passed on that page and none of them could have caught
+   * it: "at most 2.5 glyphs across the reading axis" counts columns on vertical
+   * text and *lines* on horizontal text, and two lines is a whole balloon. See
+   * spike/src/core/pages.fixture.ts for the page these numbers come from.
+   */
+  it('refuses a row of English balloons, whatever the rest of the geometry says', () => {
+    const line = (x: number, y: number, w: number): MergeableBlock => ({
+      rect: { x, y, w, h: 72 / 2400 },
+      direction: 'horizontal',
+      glyph: 30 / 1600,
+    });
+    const blocks = [
+      line(150 / 1600, 210 / 2400, 150 / 1600),
+      line(400 / 1600, 250 / 2400, 190 / 1600),
+      line(690 / 1600, 215 / 2400, 160 / 1600),
+    ];
+    const plan = planMerges(blocks, [p(0, 1, 2)], 2400 / 1600);
+    expect(plan.accepted).toEqual([]);
+    expect(plan.rejected[0]!.reason).toBe('not-vertical');
+  });
+
+  it('refuses even two horizontal fragments that would have passed every measurement', () => {
+    // Adjacent, same glyph, one line each, union barely larger than the parts.
+    // Nothing here is distinguishable from one sentence cut in half — which is
+    // the point: nor is it distinguishable from two short balloons.
+    const line = (x: number): MergeableBlock => ({
+      rect: { x, y: 0.2, w: 0.1, h: 30 / 2400 },
+      direction: 'horizontal',
+      glyph: 30 / 1600,
+    });
+    expect(planMerges([line(0.2), line(0.32)], [p(0, 1)], 1.5).rejected[0]!.reason).toBe(
+      'not-vertical',
+    );
+  });
+
   it('refuses blocks at opposite ends of the page, however sure the model is', () => {
     const blocks = [column(0.9, 0.05, 0.3), column(0.05, 0.6, 0.3)];
     expect(planMerges(blocks, [p(0, 1)], ASPECT).rejected[0]!.reason).toBe('not-adjacent');
