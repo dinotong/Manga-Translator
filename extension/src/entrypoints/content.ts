@@ -4,7 +4,9 @@ import { Overlay } from '../content/overlay/overlay';
 import { elementKey, isLoaded, isPageCandidate, pageShape, scanImages } from '../content/scan';
 import { profileFor } from '../content/site-profiles';
 import { classifyPage } from '../core/page-kind';
-import { MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
+import { effectiveLookahead, MAX_CONSECUTIVE_MISSES, pickPrefetch } from '../core/prefetch';
+import { clampInFlight, compareWork, type WorkKind } from '../core/scheduling';
+import { MAX_PAGES_PER_REQUEST } from '../core/batch';
 import { isAutoOn, siteKey } from '../core/site-scope';
 import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
@@ -113,7 +115,14 @@ export default defineContentScript({
     /** Elements the user asked for a second time — those skip the cache. */
     const redo = new Set<HTMLImageElement>();
     const waiters = new Map<string, () => void>();
-    const queue: HTMLImageElement[] = [];
+    /**
+     * Waiting work, with the reason it was asked for.
+     *
+     * The kind is not decoration: `pump` orders by it (core/scheduling.ts), so a
+     * right-click cannot end up behind a guess, and the worker is told as well
+     * so the same ordering holds on the other side of the port.
+     */
+    const queue: { img: HTMLImageElement; kind: WorkKind }[] = [];
 
     let watched = new WeakSet<HTMLImageElement>();
     let observing = false;
@@ -186,11 +195,16 @@ export default defineContentScript({
       }
 
       const alreadyDone = done.get(img) === src;
-      // Asking again for a page that already has a translation can only mean the
-      // translation was not good enough, so that is the one case worth spending
-      // a fresh request on. A first manual request still uses the cache.
       if (!manual && alreadyDone) return;
-      if (manual && alreadyDone) redo.add(img);
+      // A click always forces, whatever happened last time.
+      //
+      // This used to force only when the page had already *succeeded*, which got
+      // the case backwards: an attempt that failed or was refused never reaches
+      // `done`, so the reader clicking again precisely *because* it went wrong
+      // took the cheap path and could be handed the same cached failure forever.
+      // "Do it again" is the entire meaning of the click, and the reader has no
+      // way to know which internal state they are in.
+      if (manual) redo.add(img);
 
       // We have already been told what this exact URL hashes to, and we still
       // hold that result. Nothing downstream can produce a different answer, so
@@ -223,7 +237,15 @@ export default defineContentScript({
         return;
       }
 
-      if (!queue.includes(img)) queue.push(img);
+      const kind: WorkKind = manual ? 'manual' : 'foreground';
+      const already = queue.find((q) => q.img === img);
+      if (already) {
+        // A click on something already queued promotes it rather than adding a
+        // second entry for the same element.
+        if (kind === 'manual') already.kind = 'manual';
+      } else {
+        queue.push({ img, kind });
+      }
       pump();
     }
 
@@ -251,33 +273,48 @@ export default defineContentScript({
     }
 
     function pump(): void {
-      // One at a time: detection is GPU/CPU bound and a second concurrent page
-      // only makes the one the user is looking at arrive later.
-      if (running >= settings.performance.maxConcurrentOcr || queue.length === 0) return;
+      // Several at a time. This used to be `maxConcurrentOcr`, which is 1 — a
+      // rule written to protect the detector, which really can only run once at
+      // a time, but applied to the whole round trip including the seconds spent
+      // waiting on Gemini with the GPU idle. Measured, that wait is 97% of a
+      // job. Detection is still serialised, in the worker, where the constraint
+      // actually is (D-013).
+      const budget = clampInFlight(settings.performance.maxConcurrentRequests);
+      if (running >= budget || queue.length === 0) return;
 
       // Re-sort every time rather than keeping a heap: the list is a handful of
-      // images and the priority (distance from the middle of the viewport)
-      // changes on every scroll anyway.
+      // images, and both terms — what the reader asked for, and how far it is
+      // from the middle of the viewport — change as they scroll.
       const centre = window.innerHeight / 2;
-      queue.sort((a, b) => distance(a, centre) - distance(b, centre));
+      queue.sort((a, b) =>
+        compareWork(
+          { kind: a.kind, distance: distance(a.img, centre) },
+          { kind: b.kind, distance: distance(b.img, centre) },
+        ),
+      );
 
-      const img = queue.shift();
-      if (!img) return;
-      if (!img.isConnected || !isLoaded(img)) return pump();
+      const next = queue.shift();
+      if (!next) return;
+      if (!next.img.isConnected || !isLoaded(next.img)) return pump();
 
       running++;
-      void run(img).finally(() => {
+      void run(next.img, next.kind).finally(() => {
         running--;
         pump();
       });
+      // A freed slot may admit more than one waiting page.
+      pump();
     }
 
-    async function run(img: HTMLImageElement): Promise<void> {
+    async function run(img: HTMLImageElement, kind: WorkKind = 'foreground'): Promise<void> {
       const key = srcOf(img);
 
       // The prefetcher may have started this page while it sat in the queue.
+      // A click never joins somebody else's job: the reader is asking for this
+      // to be done again, and adopting an in-flight request would hand them the
+      // very answer they just rejected.
       const running = byKey.get(key);
-      if (running) {
+      if (running && kind !== 'manual') {
         adopt(running, img);
         return;
       }
@@ -304,6 +341,8 @@ export default defineContentScript({
           natural: got.natural,
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
+          distance: distance(img, window.innerHeight / 2),
+          ...(kind === 'manual' ? { manual: true } : {}),
           ...(redo.has(img) ? { force: true } : {}),
           ...(got.kind === 'bytes' ? { image: got.ref } : {}),
         };
@@ -377,10 +416,18 @@ export default defineContentScript({
       const pick = pickPrefetch({
         now: Date.now(),
         enabled: auto(),
-        lookahead: settings.performance.prefetchLookahead,
+        // Capped by what the cache will actually keep: reading further ahead
+        // than that evicts the earliest guesses before the reader reaches them,
+        // spending the request and the quota for nothing.
+        lookahead: effectiveLookahead(settings.performance.prefetchLookahead, settings.cache.maxPages),
         visible: document.visibilityState === 'visible',
         foregroundWaiting: queue.length > 0,
         inFlight: speculativeInFlight(),
+        // Several guesses may be *prepared* at once so their crops leave in one
+        // Gemini request. Not a second rate knob — the gap between starts and
+        // the "nothing while hidden" rule are untouched, and the number of
+        // outbound requests goes down rather than up. See core/batch.ts.
+        batchSize: MAX_PAGES_PER_REQUEST,
         consecutiveMisses: prefetchMisses,
         lastStartAt: prefetchLastStart,
         currentPage: page,
@@ -473,6 +520,7 @@ export default defineContentScript({
       p.onDisconnect.addListener(() => {
         livePort = null;
         log.debug('port closed');
+        abandonInFlight();
       });
       livePort = p;
       return p;
@@ -484,6 +532,35 @@ export default defineContentScript({
       } catch {
         connect().postMessage(msg);
       }
+    }
+
+    /**
+     * The worker went away mid-job. Let go of everything that was waiting on it.
+     *
+     * Without this the page stops translating **for good**, silently. `run`
+     * holds its concurrency slot on a promise that only `settle` resolves, and
+     * `settle` is only ever reached from a reply on this port — so a worker that
+     * is torn down with a job in flight leaves that promise pending forever,
+     * `running` permanently above zero, and `pump` returning at its first line
+     * on every subsequent call. Chrome restarts MV3 workers constantly, which
+     * makes this an ordinary event rather than an edge case, and the symptom is
+     * exactly the one reported: translation quietly stops keeping up.
+     *
+     * Jobs an element is still waiting for are re-queued rather than dropped —
+     * the reader is looking at those pages, and the worker will be back the
+     * moment we speak to it again. Guesses are not: nobody is waiting, and the
+     * prefetcher will make them again if they still make sense.
+     */
+    function abandonInFlight(): void {
+      const stranded = Array.from(active.values());
+      if (stranded.length === 0) return;
+      log.warn(`worker went away with ${stranded.length} job(s) in flight — releasing them`);
+      const retry: HTMLImageElement[] = [];
+      for (const job of stranded) {
+        for (const img of job.imgs) if (srcOf(img) === job.key) retry.push(img);
+        settle(job);
+      }
+      for (const img of retry) enqueue(img);
     }
 
     function onPortMessage(msg: SwToContent): void {

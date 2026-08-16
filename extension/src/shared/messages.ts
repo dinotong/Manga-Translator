@@ -69,6 +69,26 @@ export interface JobSource {
    * rate-limits these separately. See core/prefetch.ts.
    */
   prefetch?: boolean;
+  /**
+   * The reader asked for this one explicitly — right-click, or "translate this
+   * page now".
+   *
+   * Carried all the way to the worker rather than inferred there, because it
+   * changes three separate things: the job jumps the queue ahead of everything
+   * automatic (core/scheduling.ts), it is sent in a request of its own rather
+   * than batched with other pages (background/read-batcher.ts), and it always
+   * forces past the cache. A click means "do it again", and the reader has no
+   * way to know which internal state the previous attempt left behind.
+   */
+  manual?: boolean;
+  /**
+   * Pixels from the middle of the viewport when the job was queued.
+   *
+   * Only a tiebreak between jobs of the same kind, and only the content script
+   * can measure it. Absent means "no opinion" — see `distanceOf` in
+   * entrypoints/background.ts.
+   */
+  distance?: number;
 }
 
 /* ---------- content script -> service worker (over a long-lived Port) ---------- */
