@@ -17,7 +17,13 @@ import {
 } from '../core/components';
 import { DIRECTION_DEFAULTS, detectDirection } from '../core/direction';
 import { suppressOverlaps } from '../core/geometry';
-import { expandBox, planDetInput, rgbaToNchw, shrinkBox } from '../core/preprocess';
+import {
+  DETECT_POSTPROCESS,
+  expandBox,
+  planDetInput,
+  rgbaToNchw,
+  shrinkBox,
+} from '../core/preprocess';
 import type { LangCode, TextLine } from '../types';
 import { ModelNotDownloadedError, type TextDetector } from './types';
 
@@ -69,14 +75,11 @@ export const PP_OCR_DEFAULTS: PpOcrOptions = {
   maxSide: 960,
   expandRatio: 0.1,
   components: { ...COMPONENT_DEFAULTS, threshold: 0.3, minArea: 20, minSide: 3 },
-  // D-009 measured 0.015 over 18 fixtures and picked it. The extension ships
-  // 0.01, and the harness's job is to show what the extension will do, so the
-  // default follows the extension and the sweep stays available in the UI.
-  dilateRatio: 0.01,
-  // Off, because the extension no longer runs it: `suppressOverlaps` is still in
-  // core/geometry.ts but nothing in extension/src calls it. Leaving it on here
-  // would make the harness quietly drop boxes the extension keeps.
-  nmsIou: 1,
+  // Both from core/preprocess.ts, which is the extension's own definition. The
+  // harness's job is to show what the extension will do, so these are not the
+  // harness's numbers to choose — the sweep stays available in the UI.
+  dilateRatio: DETECT_POSTPROCESS.dilateRatio,
+  nmsIou: DETECT_POSTPROCESS.nmsIou,
   numThreads: 1,
 };
 

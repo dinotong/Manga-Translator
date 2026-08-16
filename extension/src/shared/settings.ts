@@ -6,6 +6,7 @@ import {
   normalizeCacheLimits,
 } from '../core/cache-budget';
 import { clampOpacity } from '../core/panel-shape';
+import { DETECT_POSTPROCESS } from '../core/preprocess';
 import { clampLookahead } from '../core/prefetch';
 import { clampInFlight, DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
 import type { ApiKeyEntry } from '../core/quota';
@@ -223,7 +224,7 @@ export const DEFAULT_SETTINGS: Settings = {
     contextBubbles: 3,
     modelGrouping: false,
   },
-  ocr: { runtime: 'auto', preset: 'balanced', dilateRatio: 0.01 },
+  ocr: { runtime: 'auto', preset: 'balanced', dilateRatio: DETECT_POSTPROCESS.dilateRatio },
   display: {
     // 'target-only', not the source-on-hover variant: hovering is for looking at
     // the picture, and swapping one block of text for another leaves the art

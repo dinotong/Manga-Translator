@@ -1,3 +1,4 @@
+import { DETECT_POSTPROCESS } from './core/preprocess';
 import type { PresetName } from './core/resolution';
 import { GeminiVisionReader } from './ocr/GeminiVisionReader';
 import { MangaOcrRecognizer } from './ocr/MangaOcrRecognizer';
@@ -290,6 +291,24 @@ els.drop.addEventListener('drop', (e) => {
   els.drop.classList.remove('over');
   void processFiles([...(e.dataTransfer?.files ?? [])]);
 });
+
+/**
+ * Start the two post-processing controls where the extension is.
+ *
+ * Set here rather than marked `selected` in the HTML, because a value written
+ * twice is a value that drifts: these shipped at 0.015 and 0.6 against the
+ * extension's 0.01 and off, and `tune()` applies them on every run — so the
+ * harness was quietly answering a question about a program nobody runs. The
+ * sweep is still one click away; only the starting point is fixed. See
+ * DETECT_POSTPROCESS in core/preprocess.ts, D-038.
+ */
+els.dilate.value = String(DETECT_POSTPROCESS.dilateRatio);
+els.nms.value = String(DETECT_POSTPROCESS.nmsIou);
+if (els.dilate.selectedIndex < 0 || els.nms.selectedIndex < 0) {
+  // The constant moved to a value the menu does not offer. Loud, because the
+  // alternative is the browser silently picking the first option.
+  console.error('[harness] no option matches DETECT_POSTPROCESS — add one to index.html', DETECT_POSTPROCESS);
+}
 
 // Restore the key so it survives a reload. localStorage only — this is a dev
 // harness on localhost, and the extension will use chrome.storage.local with an

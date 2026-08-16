@@ -1,5 +1,17 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MEAN, STD, STRIDE, expandBox, planDetInput, rgbaToNchw, shrinkBox } from './preprocess';
+import { PP_OCR_DEFAULTS } from '../offscreen/PpOcrDetector';
+import { DEFAULT_SETTINGS } from '../shared/settings';
+import {
+  DETECT_POSTPROCESS,
+  MEAN,
+  STD,
+  STRIDE,
+  expandBox,
+  planDetInput,
+  rgbaToNchw,
+  shrinkBox,
+} from './preprocess';
 
 describe('planDetInput', () => {
   it('produces sides that are multiples of the stride', () => {
@@ -145,5 +157,41 @@ describe('shrinkBox', () => {
     const after = shrinkBox(before, 10);
     expect(after.x + after.w / 2).toBeCloseTo(before.x + before.w / 2, 6);
     expect(after.y + after.h / 2).toBeCloseTo(before.y + before.h / 2, 6);
+  });
+});
+
+/**
+ * The harness exists to predict the extension, and for a while it did not: its
+ * form controls shipped dilate 0.015 and NMS 0.6 against the extension's 0.01
+ * and off, and it applies those on every run. The owner's bug was diagnosed on
+ * an instrument that was not calibrated to the thing it measured.
+ *
+ * So every place that turns a probability map into boxes now reads one
+ * definition, and this is the guard that says so out loud. If a future change
+ * wants different numbers, it changes DETECT_POSTPROCESS and everything follows.
+ */
+describe('DETECT_POSTPROCESS is the single definition', () => {
+  it('is what the extension detector starts with', () => {
+    expect(PP_OCR_DEFAULTS.dilateRatio).toBe(DETECT_POSTPROCESS.dilateRatio);
+  });
+
+  it('is what a fresh install stores', () => {
+    expect(DEFAULT_SETTINGS.ocr.dilateRatio).toBe(DETECT_POSTPROCESS.dilateRatio);
+  });
+
+  it('offers a harness menu option for each value, since the UI selects by value', () => {
+    // `els.dilate.value = String(...)` silently selects nothing when no option
+    // matches, and the browser then shows the first one instead.
+    const html = readFileSync(new URL('../../../spike/index.html', import.meta.url), 'utf8');
+    for (const v of [DETECT_POSTPROCESS.dilateRatio, DETECT_POSTPROCESS.nmsIou]) {
+      expect(html, `no <option value="${v}">`).toContain(`value="${v}"`);
+    }
+  });
+
+  it('leaves the harness menus with no hardcoded default to drift', () => {
+    const html = readFileSync(new URL('../../../spike/index.html', import.meta.url), 'utf8');
+    const menus = html.match(/<select id="(?:dilate|nms)">[\s\S]*?<\/select>/g) ?? [];
+    expect(menus).toHaveLength(2);
+    for (const menu of menus) expect(menu).not.toContain('selected');
   });
 });

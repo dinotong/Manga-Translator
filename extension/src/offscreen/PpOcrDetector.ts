@@ -16,7 +16,13 @@ import {
   dilate,
 } from '../core/components';
 import { DIRECTION_DEFAULTS, detectDirection } from '../core/direction';
-import { expandBox, planDetInput, rgbaToNchw, shrinkBox } from '../core/preprocess';
+import {
+  DETECT_POSTPROCESS,
+  expandBox,
+  planDetInput,
+  rgbaToNchw,
+  shrinkBox,
+} from '../core/preprocess';
 import type { LangCode, TextLine } from '../types';
 import { PipelineError } from '../shared/errors';
 import { makeLog } from '../shared/log';
@@ -61,7 +67,8 @@ export const PP_OCR_DEFAULTS: PpOcrOptions = {
   maxSide: 960,
   expandRatio: 0.1,
   components: { ...COMPONENT_DEFAULTS, threshold: 0.3, minArea: 20, minSide: 3 },
-  dilateRatio: 0.01,
+  // One definition, in core/preprocess.ts, shared with the harness.
+  dilateRatio: DETECT_POSTPROCESS.dilateRatio,
   numThreads: 1,
 };
 

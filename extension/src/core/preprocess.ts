@@ -15,6 +15,36 @@ export const STD = [0.229, 0.224, 0.225] as const;
 /** The model's convolution stack downsamples by 32, so both sides must divide by it. */
 export const STRIDE = 32;
 
+/**
+ * The box post-processing the extension actually runs — **the one definition**.
+ *
+ * Everything that turns a probability map into boxes must read these rather
+ * than repeat them: the extension's detector, the harness's detector, the
+ * harness's form controls, and the settings default. They were repeated in four
+ * places and had already drifted, so the harness ran a 14 px dilation and
+ * discarded overlapping boxes while the extension ran 10 px and kept them all.
+ * A harness that answers a different question than the program it exists to
+ * predict is worse than no harness — the owner's bug was diagnosed on an
+ * instrument that was not calibrated to the thing it was measuring, and it
+ * happened to be right.
+ *
+ * That is the same failure the `spike/src/core` copies had before they became
+ * re-exports, and it is fixed the same way: one definition, imported.
+ */
+export const DETECT_POSTPROCESS = {
+  /**
+   * Mask dilation before labelling, as a fraction of the model input's long
+   * edge. D-009 swept this over 18 fixtures; the extension ships 0.01.
+   */
+  dilateRatio: 0.01,
+  /**
+   * Overlap suppression, as an IoU above which the lower-scoring box is
+   * dropped. 1 means off, which is what the extension does: `suppressOverlaps`
+   * still exists in core/geometry.ts but nothing in the extension calls it.
+   */
+  nmsIou: 1,
+} as const;
+
 export interface DetInputPlan {
   /** Size actually fed to the model: multiple of STRIDE, capped by maxSide. */
   input: Size;
