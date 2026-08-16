@@ -3,6 +3,7 @@ import type { OverlayBlock } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
+import { panelRect } from '../../core/panel-shape';
 
 /**
  * The overlay layer.
@@ -346,8 +347,13 @@ export class Overlay {
   private renderBox(b: OverlayBlock, natural: Size): string {
     const pct = (v: number) => (v * 100).toFixed(3);
     const aspect = natural.w > 0 ? natural.h / natural.w : 1;
-    const wCqw = b.rect.w * 100;
-    const hCqw = b.rect.h * 100 * aspect;
+
+    // Vertical source text gets a wider panel than it was found in: Thai is
+    // horizontal, and inside a column a few percent of the page wide it wraps
+    // after every character. See core/panel-shape.ts.
+    const rect = panelRect(b.rect, b.direction, aspect);
+    const wCqw = rect.w * 100;
+    const hCqw = rect.h * 100 * aspect;
 
     // A box holds about w*h / (1.2*s^2) roughly-square glyphs at size s with 1.2
     // line spacing. Solve for s at N characters.
@@ -359,8 +365,8 @@ export class Overlay {
 
     const hover = this.settings.display.mode === 'target-plus-source-on-hover' && b.source;
     const style =
-      `left:${pct(b.rect.x)}%;top:${pct(b.rect.y)}%;` +
-      `width:${pct(b.rect.w)}%;height:${pct(b.rect.h)}%;` +
+      `left:${pct(rect.x)}%;top:${pct(rect.y)}%;` +
+      `width:${pct(rect.w)}%;height:${pct(rect.h)}%;` +
       `font-size:${fs.toFixed(2)}cqw;` +
       `--mt-box-opacity:${this.settings.display.boxOpacity}`;
 
