@@ -3,6 +3,13 @@ import { cacheStats, clearCache } from '../cache/stores';
 import { runJob } from '../background/pipeline';
 import { callOffscreen, ensureOffscreen } from '../background/offscreen-manager';
 import { keyFingerprint, keyReport, type KeyState, nextQuotaResetAt } from '../core/quota';
+import {
+  clampInFlight,
+  DEFAULT_MAX_IN_FLIGHT,
+  nextToRun,
+  type Running,
+  type WorkKind,
+} from '../core/scheduling';
 import { clearTransfers } from '../shared/blob-bridge';
 import { HINTS_TH, toErrorPayload } from '../shared/errors';
 import { tidyKeyStatuses } from '../shared/key-status';
@@ -72,12 +79,19 @@ export default defineBackground(() => {
       const controller = new AbortController();
       inflight.set(raw.jobId, controller);
 
-      // Serialised globally: detection is GPU/CPU bound and running two pages at
-      // once makes both slower while making the visible one arrive later.
-      void enqueue(async () => {
-        // Jobs are serialised, so by the time this runs the tab may have turned
-        // the page and cancelled it. Starting anyway would spend a request from
-        // a 1,000/day budget on a page nobody is looking at.
+      const kind: WorkKind = raw.source.manual
+        ? 'manual'
+        : raw.source.prefetch
+          ? 'speculative'
+          : 'foreground';
+
+      // Several at a time now, ordered by what the reader asked for. Detection
+      // is still one at a time inside the pipeline (D-013); what used to be
+      // serialised along with it — the 1.3-41 s Gemini call — no longer is.
+      void enqueue(kind, distanceOf(raw), async () => {
+        // A job can sit in the queue long enough for the tab to turn the page
+        // and cancel it. Starting anyway would spend a request from a 1,000/day
+        // budget on a page nobody is looking at.
         if (controller.signal.aborted) {
           inflight.delete(raw.jobId);
           return;
@@ -132,7 +146,13 @@ export default defineBackground(() => {
     return true;
   });
 
+  void loadSettings().then((s) => {
+    maxInFlight = clampInFlight(s.performance.maxConcurrentRequests);
+  });
+
   onSettingsChanged((settings) => {
+    maxInFlight = clampInFlight(settings.performance.maxConcurrentRequests);
+    pumpJobs();
     void chrome.tabs.query({}).then((tabs) => {
       for (const tab of tabs) {
         if (tab.id === undefined) continue;
@@ -147,12 +167,72 @@ export default defineBackground(() => {
 
 /* ---------------- helpers ---------------- */
 
-let chain: Promise<unknown> = Promise.resolve();
+/**
+ * The worker's job scheduler.
+ *
+ * Replaces a single global promise chain that ran one job at a time from end to
+ * end. That chain was protecting the detector, which really can only run once at
+ * a time, but it was also serialising the network wait — and measurement says
+ * the network wait is 97% of a job (126-481 ms detecting, 1.3-41 s in Gemini).
+ * The detector keeps its own chain inside background/pipeline.ts; this only
+ * bounds how many whole jobs are alive at once.
+ *
+ * The admission and ordering rules are pure functions in core/scheduling.ts so
+ * the guarantees — a right-click outranks everything, a guess never takes the
+ * last slot — can be tested without a browser.
+ */
+interface Queued {
+  kind: WorkKind;
+  distance: number;
+  run: () => Promise<unknown>;
+  done: (value: unknown) => void;
+  fail: (err: unknown) => void;
+}
 
-function enqueue<T>(task: () => Promise<T>): Promise<T> {
-  const next = chain.then(task, task);
-  chain = next.catch(() => undefined);
-  return next;
+const queued: Queued[] = [];
+const running: Running = { manual: 0, foreground: 0, speculative: 0 };
+let maxInFlight = DEFAULT_MAX_IN_FLIGHT;
+
+function enqueue<T>(kind: WorkKind, distance: number, task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    queued.push({
+      kind,
+      distance,
+      run: task,
+      done: resolve as (value: unknown) => void,
+      fail: reject,
+    });
+    pumpJobs();
+  });
+}
+
+function pumpJobs(): void {
+  for (;;) {
+    const next = nextToRun(queued, running, maxInFlight);
+    if (!next) return;
+    queued.splice(queued.indexOf(next), 1);
+    running[next.kind]++;
+    void next
+      .run()
+      .then(next.done, next.fail)
+      .finally(() => {
+        running[next.kind]--;
+        pumpJobs();
+      });
+  }
+}
+
+/**
+ * How far the page is from the middle of the viewport, for the tiebreak within a
+ * kind.
+ *
+ * The content script measures it and the worker cannot, so an absent value means
+ * "no opinion" rather than "closest" — otherwise an older build's messages would
+ * outrank everything a newer one queues.
+ */
+function distanceOf(raw: { source: { distance?: number } }): number {
+  const d = raw.source.distance;
+  return typeof d === 'number' && Number.isFinite(d) ? d : Number.MAX_SAFE_INTEGER;
 }
 
 function post(port: chrome.runtime.Port, msg: SwToContent): void {

@@ -1,5 +1,6 @@
 import { getOcr, getTranslations, putOcr, putTranslations, evictIfNeeded } from '../cache/stores';
 import { ocrKey, type OcrBlockRecord, translationKey } from '../cache/db';
+import { readPageBatched } from './read-batcher';
 import { putBytes, releaseBytes, takeBytes } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { textHash } from '../shared/hash';
@@ -49,11 +50,15 @@ export async function runJob(
         : {}),
     },
     {
-      // A prefetch never waits out a per-minute limit. Jobs are serialised, so
-      // parking a speculative page for 30 seconds also parks the page the
-      // reader is actually looking at — the exact inversion prefetch exists to
-      // avoid. It just fails; nobody is waiting for it.
-      maxWaitMs: source.prefetch ? 0 : 45_000,
+      // A prefetch used to be given zero patience, because jobs were serialised
+      // and parking a speculative page for 30 seconds parked the page the reader
+      // was actually looking at with it. Jobs run several at a time now, and one
+      // slot is permanently reserved for non-speculative work
+      // (core/scheduling.ts), so a waiting guess cannot hold the reader up. It
+      // is given a real but smaller budget: the image has already been fetched
+      // and the detector has already run on it, and throwing that away to save a
+      // ten second wait is a bad trade.
+      maxWaitMs: source.prefetch ? 15_000 : 45_000,
       onWait: (ms) =>
         onProgress('translate', `โควตาต่อนาทีเต็ม — รอ ${Math.ceil(ms / 1000)} วินาที`),
     },
@@ -87,19 +92,26 @@ export async function runJob(
 
   let detect;
   try {
-    const reply = await callOffscreen({
-      t: 'OFF_DETECT',
-      jobId: source.elementKey,
-      image: parked,
-      lang: from,
-      preset: settings.ocr.preset,
-      runtime: settings.ocr.runtime,
-      dilateRatio: settings.ocr.dilateRatio,
-      // Reading order only feeds the model's context; the overlay draws each
-      // box where it is, so getting this wrong is a quality issue, not a
-      // correctness one.
-      rtl: from !== 'en',
-    });
+    // Serialised, and only this step. ONNX sessions are not re-entrant (D-013),
+    // so two detections at once produce `Session already started`. Measured at
+    // 126-481 ms per page, so a queue here costs almost nothing — while the
+    // Gemini call it used to be bundled with costs 1.3-41 s and has no such
+    // constraint. Separating the two is the change; see core/scheduling.ts.
+    const reply = await detectSerially(() =>
+      callOffscreen({
+        t: 'OFF_DETECT',
+        jobId: source.elementKey,
+        image: parked,
+        lang: from,
+        preset: settings.ocr.preset,
+        runtime: settings.ocr.runtime,
+        dilateRatio: settings.ocr.dilateRatio,
+        // Reading order only feeds the model's context; the overlay draws each
+        // box where it is, so getting this wrong is a quality issue, not a
+        // correctness one.
+        rtl: from !== 'en',
+      }),
+    );
     if (!('result' in reply)) throw new PipelineError('UNKNOWN', 'offscreen returned no result');
     detect = reply.result;
   } finally {
@@ -117,7 +129,18 @@ export async function runJob(
 
   let items: ({ src: string; out: string } | null)[];
   try {
-    items = await gemini.readPage(crops, signal);
+    // Through the batcher: crops from up to three pages travel in one request,
+    // which triples throughput without spending any more of the per-minute
+    // budget. A page the reader can see is dispatched immediately and never
+    // waits for a batch to fill; only guesses queue. See background/read-batcher.ts.
+    items = await readPageBatched({
+      lane: readLane(source, from, to, gemini.model),
+      jobId: source.elementKey,
+      crops,
+      kind: source.manual ? 'manual' : source.prefetch ? 'speculative' : 'foreground',
+      ring: gemini,
+      ...(signal ? { signal } : {}),
+    });
   } catch (err) {
     if (err instanceof PipelineError && err.code === 'PROVIDER_REFUSED') {
       // One panel poisoned the batch. Re-ask bubble by bubble so the rest of the
@@ -256,6 +279,36 @@ async function acquire(
     throw new PipelineError('ACQUIRE_FAILED', 'job has neither bytes nor a URL');
   }
   return fetchImage(source.url);
+}
+
+/**
+ * Which pages may legally share one Gemini request.
+ *
+ * The language pair and the model decide what the prompt says, and `setKey`
+ * decides whose story it is: batching a page of one gallery with a page of
+ * another would put two unrelated works in front of the model at once, and the
+ * continuity context attached to the request belongs to exactly one of them. A
+ * page with no set key — a right-click on some arbitrary site — gets a lane of
+ * its own, keyed by the element, so it can never be mixed with anything.
+ */
+function readLane(source: JobSource, from: string, to: string, model: string): string {
+  return `${from}|${to}|${model}|${source.setKey ?? `solo:${source.elementKey}`}`;
+}
+
+/**
+ * Detection, one at a time, forever.
+ *
+ * D-013: the ONNX runtime rejects a second concurrent run on the same session
+ * with `Session already started`. This is the only part of the pipeline with
+ * that constraint, and keeping the chain here rather than around the whole job
+ * is the entire point of the concurrency split.
+ */
+let detectChain: Promise<unknown> = Promise.resolve();
+
+function detectSerially<T>(task: () => Promise<T>): Promise<T> {
+  const next = detectChain.then(task, task);
+  detectChain = next.catch(() => undefined);
+  return next;
 }
 
 function remember(setKey: string | null, blocks: readonly OverlayBlock[], keep: number): void {
