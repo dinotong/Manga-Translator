@@ -293,11 +293,15 @@ async function diagnose(): Promise<DiagnosticLine[]> {
 
   try {
     const stats = await cacheStats();
+    const { maxPages, maxBytes } = settings.cache;
     lines.push({
       id: 'cache',
       label: 'แคช',
       status: 'ok',
-      detail: `${stats.ocrRecords} หน้า · ${stats.translationRecords} ประโยค · ${(stats.bytes / 1e6).toFixed(1)} MB / 200 MB`,
+      // Pages first and against the limit the reader set, because "37 / 60
+      // หน้า" answers the question they have and a raw megabyte figure never
+      // did. The ceiling is second because it is a guard, not a dial.
+      detail: `${stats.ocrRecords} / ${maxPages} หน้า · ${(stats.bytes / 1e6).toFixed(2)} / ${(maxBytes / 1e6).toFixed(0)} MB · ${stats.translationRecords} ประโยค`,
       fix: '',
     });
   } catch (err) {

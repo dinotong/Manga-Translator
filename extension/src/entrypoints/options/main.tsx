@@ -1,6 +1,13 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '../../ui/ui.css';
+import {
+  clampCacheBytes,
+  clampCachePages,
+  estimateBytesForPages,
+  MAX_CACHE_PAGES,
+  MIN_CACHE_PAGES,
+} from '../../core/cache-budget';
 import { clampLookahead, MAX_LOOKAHEAD } from '../../core/prefetch';
 import {
   type ApiKeyEntry,
@@ -28,6 +35,26 @@ import {
 } from '../../shared/lang';
 import type { CacheStats, DiagnosticLine, Request, Response } from '../../shared/messages';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from '../../shared/settings';
+
+/**
+ * Cache sizes worth one click, in the words the question arrives in.
+ *
+ * The extension cannot ask the site how long the chapter is — gallery length is
+ * read in the content script, and the budget is applied in the service worker —
+ * so "ทั้งตอน" is a number chosen to be larger than any chapter rather than a
+ * measured one. 60 covers the long end of a MangaDex chapter (20–45) with room
+ * to page backwards; 200 covers a whole imhentai gallery. Both cost under a
+ * megabyte, which is what makes being generous here easy.
+ */
+const CACHE_PRESETS = [
+  { pages: 40, label: '40 หน้า' },
+  { pages: 60, label: 'ทั้งตอน (60)' },
+  { pages: 200, label: 'ทั้งเล่ม (200)' },
+  { pages: MAX_CACHE_PAGES, label: `เก็บหมด (${MAX_CACHE_PAGES})` },
+] as const;
+
+/** Ceilings offered in MB. Anything hand-edited is shown as-is rather than lost. */
+const CACHE_BYTE_CHOICES = [20, 50, 100, 200, 500, 1000, 2000];
 
 /**
  * Set-once settings, plus the diagnostics page.
@@ -506,11 +533,88 @@ function Options() {
       <section>
         <h2>แคช</h2>
         <p class="hint">
-          {stats
-            ? `${stats.ocrRecords} หน้า · ${stats.translationRecords} ประโยค · ${(stats.bytes / 1e6).toFixed(1)} MB`
-            : 'กำลังอ่าน…'}
+          หน้าที่แปลไว้แล้วจะไม่ถูกส่งไปแปลซ้ำ — ย้อนกลับไปอ่านหน้าเดิมจึงขึ้นทันทีและไม่เสียโควตา
+        </p>
+
+        <label>เก็บไว้กี่หน้า</label>
+        <div class="row">
+          {CACHE_PRESETS.map((p) => (
+            <button
+              key={p.pages}
+              class={s.cache.maxPages === p.pages ? 'primary' : undefined}
+              onClick={() => void patch({ cache: { ...s.cache, maxPages: p.pages } })}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <input
+          type="number"
+          min={String(MIN_CACHE_PAGES)}
+          max={String(MAX_CACHE_PAGES)}
+          step="1"
+          value={String(s.cache.maxPages)}
+          onChange={(e) =>
+            void patch({
+              cache: { ...s.cache, maxPages: clampCachePages((e.target as HTMLInputElement).value) },
+            })
+          }
+        />
+        <p class="hint">
+          {s.cache.maxPages} หน้า ≈ <b>{(estimateBytesForPages(s.cache.maxPages) / 1e6).toFixed(1)} MB</b>{' '}
+          บนดิสก์ — แคชเก็บ<b>ตำแหน่งกล่องกับตัวหนังสือ ไม่ได้เก็บรูป</b> หน้าหนึ่งจึงประมาณ 4 KB เท่านั้น ·
+          ตอนหนึ่งของ MangaDex ปกติ 20–45 หน้า
+        </p>
+        <p class="hint">
+          ต่ำสุด {MIN_CACHE_PAGES} หน้า เพราะ<b>ต้องไม่น้อยกว่าจำนวนหน้าที่แปลล่วงหน้าได้สูงสุด</b> ({MAX_LOOKAHEAD}) —
+          ถ้าแคชเล็กกว่านั้น หน้าที่แปลล่วงหน้าจะถูกลบทิ้งก่อนคุณอ่านถึง เสียทั้งคำขอและโควตาฟรีๆ
+          {s.performance.prefetchLookahead > 0 && (
+            <> · ตอนนี้ตั้งอ่านล่วงหน้าไว้ {s.performance.prefetchLookahead} หน้า</>
+          )}
+        </p>
+
+        <label>เพดานพื้นที่ (ตัวกันจริง)</label>
+        <select
+          value={String(Math.round(s.cache.maxBytes / 1024 / 1024))}
+          onChange={(e) =>
+            void patch({
+              cache: {
+                ...s.cache,
+                maxBytes: clampCacheBytes(Number((e.target as HTMLSelectElement).value) * 1024 * 1024),
+              },
+            })
+          }
+        >
+          {/* A hand-edited ceiling gets its own row rather than showing as blank. */}
+          {[...new Set([...CACHE_BYTE_CHOICES, Math.round(s.cache.maxBytes / 1024 / 1024)])]
+            .sort((a, b) => a - b)
+            .map((mb) => (
+              <option key={mb} value={String(mb)}>
+                {mb} MB
+              </option>
+            ))}
+        </select>
+        <p class="hint">
+          จำนวนหน้าบอกไม่ได้ว่ากินดิสก์เท่าไร ถ้าวันหนึ่งหน้าหนึ่งใหญ่กว่าที่วัดไว้มากๆ เพดานนี้คือตัวหยุดจริง ·
+          ถึงเพดานเมื่อไหร่จะลบหน้าเก่าสุดก่อนเสมอ ไม่ว่าจะยังไม่ครบจำนวนหน้าก็ตาม
+        </p>
+
+        <label>ใช้ไปแล้ว</label>
+        <p class="hint">
+          {stats ? (
+            <>
+              <b>
+                {stats.ocrRecords} / {s.cache.maxPages} หน้า
+              </b>{' '}
+              · {(stats.bytes / 1e6).toFixed(2)} / {(s.cache.maxBytes / 1e6).toFixed(0)} MB ·{' '}
+              {stats.translationRecords} ประโยค
+            </>
+          ) : (
+            'กำลังอ่าน…'
+          )}
         </p>
         <div class="row">
+          <button onClick={() => void refreshStats()}>อ่านค่าใหม่</button>
           <button onClick={() => void send({ t: 'CACHE_CLEAR', which: 'translation' }).then(refreshStats)}>
             ล้างเฉพาะคำแปล
           </button>
@@ -519,7 +623,8 @@ function Options() {
           </button>
         </div>
         <p class="hint">
-          ล้างเฉพาะคำแปลเมื่ออยากแปลใหม่ด้วยโมเดลอื่น — ผลการอ่านภาพซึ่งแพงกว่าจะยังอยู่
+          ล้างเฉพาะคำแปลเมื่ออยากแปลใหม่ด้วยโมเดลอื่น — ผลการอ่านภาพซึ่งแพงกว่าจะยังอยู่ ·
+          ช่อง “ประโยค” ไม่ถูกนับเป็นหน้า มันถูกใช้ซ้ำข้ามเรื่องและจะถูกลบก็ต่อเมื่อชนเพดานพื้นที่จริงๆ
         </p>
       </section>
 
