@@ -342,6 +342,7 @@ export default defineContentScript({
           pageUrl: location.href,
           setKey: profile.setKey?.(new URL(location.href)) ?? null,
           distance: distance(img, window.innerHeight / 2),
+          ...(inViewport(img) ? { onScreen: true } : {}),
           ...(kind === 'manual' ? { manual: true } : {}),
           ...(redo.has(img) ? { force: true } : {}),
           ...(got.kind === 'bytes' ? { image: got.ref } : {}),
@@ -633,10 +634,20 @@ export default defineContentScript({
 
     /* ---------------- observers ---------------- */
 
-    // 200% above: on a long strip the user scrolls fast, so work has to start
-    // roughly two screens before the image appears for the result to be there
-    // when it does.
-    const ROOT_MARGIN = { above: 2, below: 1 };
+    // Two screens in both directions.
+    //
+    // It used to be two above and one below, which is the wrong way round for
+    // the case it was written for. Reading a long strip means scrolling *down*,
+    // so the pages about to be needed are the ones below the viewport, and the
+    // bottom margin is the entire lead time. One screen of lead is less than the
+    // height of a single page on both measured galleries (1434 px and 1808 px
+    // against a 768 px viewport), so work started only once the page was
+    // effectively already arriving — and a page that is already arriving has to
+    // be sent on its own, which is why batching never fired here.
+    //
+    // Two screens is about twelve seconds at a normal reading pace, which is the
+    // slack the batcher spends a few hundred milliseconds of.
+    const ROOT_MARGIN = { above: 2, below: 2 };
     const io = new IntersectionObserver(
       (entries) => {
         // Asked once for the batch: the page-kind half of `auto()` measures every

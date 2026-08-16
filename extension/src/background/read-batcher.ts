@@ -27,11 +27,19 @@ const log = makeLog('batch');
  *
  * **The page the reader can see never waits for a batch to fill.** Collecting
  * work means delaying it, and delay on the visible page is the complaint being
- * fixed, not an acceptable price for fixing it. So only speculative pages ever
- * sit in a queue. A page the reader is looking at is dispatched the moment it
- * arrives — and it takes whatever speculative pages are already waiting along
- * with it, because those cost nothing to add and would otherwise need a request
- * of their own.
+ * fixed, not an acceptable price for fixing it. So a page that is actually on
+ * screen is dispatched the moment it arrives — and it takes whatever pages were
+ * already waiting along with it, because those cost nothing to add and would
+ * otherwise need a request of their own.
+ *
+ * What may wait is work for pages the reader has not reached. The
+ * IntersectionObserver starts a page two screens early, which at a normal
+ * reading pace is about twelve seconds of slack, so pausing such a page for a
+ * few hundred milliseconds to let its neighbours join it is invisible. That
+ * distinction is the difference between batching working and batching never
+ * firing at all: measured on a luscious album, where there is no prefetch
+ * profile and therefore nothing speculative, every job was dispatched alone and
+ * not one request carried more than one page.
  *
  * A right-click goes further still and travels alone: it is the reader saying
  * "this one, now", usually because the last attempt was wrong, and giving it its
@@ -39,17 +47,39 @@ const log = makeLog('batch');
  */
 
 /**
- * How long a speculative page waits for company before going on its own.
+ * How long a page nobody is looking at yet waits for company.
  *
- * Short on purpose. The prefetcher spaces its own starts by 500 ms
- * (core/prefetch.ts), so this is roughly the time it takes the next guess to
- * arrive — long enough to collect a batch during continuous reading, and short
- * enough that a lone guess at the end of a chapter is not left sitting. Nothing
- * the reader can see is ever behind this timer.
+ * Short on purpose, and bounded from both sides by measurement. Detection takes
+ * 126-481 ms per page and is serialised, so consecutive pages of a strip reach
+ * this queue roughly half a second apart — below about 500 ms nothing would ever
+ * meet anything else. Above it, the cost is slack taken out of the twelve
+ * seconds a lookahead page has before the reader arrives. Nothing on the
+ * reader's screen is ever behind this timer.
  */
 export const BATCH_LINGER_MS = 700;
 
-export type ReadKind = 'manual' | 'foreground' | 'speculative';
+/**
+ * Why this page is being read, which decides how patient it may be.
+ *
+ * - `manual` — a right-click. Goes out alone and immediately.
+ * - `foreground` — the image is on the reader's screen. Goes out immediately,
+ *   taking any waiting pages with it.
+ * - `lookahead` — real work for a page the reader will reach, queued by the
+ *   IntersectionObserver two screens early. Nobody is looking at it yet, so it
+ *   may wait a moment for company.
+ * - `speculative` — a prefetch guess. Same patience as `lookahead`.
+ *
+ * Splitting `foreground` from `lookahead` is what makes batching happen at all
+ * on a site with no prefetch profile. Measured before the split: zero multi-page
+ * requests across a four minute read of a luscious album, because every job was
+ * nominally "foreground" and every one of them dispatched alone.
+ */
+export type ReadKind = 'manual' | 'foreground' | 'lookahead' | 'speculative';
+
+/** Kinds that may sit in a queue waiting for company. */
+function mayWait(kind: ReadKind): boolean {
+  return kind === 'lookahead' || kind === 'speculative';
+}
 
 export interface ReadRequest {
   /** Groups requests that may legally share one Gemini call. */
@@ -98,11 +128,11 @@ export function readPageBatched(req: ReadRequest): Promise<Slot> {
       return;
     }
 
-    if (req.kind === 'foreground') {
+    if (!mayWait(req.kind)) {
       const queue = lanes.get(req.lane) ?? [];
-      // The visible page leads; the guesses that were already waiting ride
-      // along, up to the cap. `planBatch` is asked about the tail only, so the
-      // visible page can never be the one squeezed out.
+      // The visible page leads; whatever was already waiting rides along, up to
+      // the cap. `planBatch` is asked about the tail only, so the visible page
+      // can never be the one squeezed out.
       const companions = planBatch(
         queue.map((w) => ({ id: w.jobId, crops: w.crops.length, bytes: w.bytes })),
         { ...DEFAULT_CAPS, maxPages: MAX_PAGES_PER_REQUEST - 1 },

@@ -137,7 +137,13 @@ export async function runJob(
       lane: readLane(source, from, to, gemini.model),
       jobId: source.elementKey,
       crops,
-      kind: source.manual ? 'manual' : source.prefetch ? 'speculative' : 'foreground',
+      kind: source.manual
+        ? 'manual'
+        : source.prefetch
+          ? 'speculative'
+          : source.onScreen
+            ? 'foreground'
+            : 'lookahead',
       ring: gemini,
       ...(signal ? { signal } : {}),
     });
@@ -284,15 +290,34 @@ async function acquire(
 /**
  * Which pages may legally share one Gemini request.
  *
- * The language pair and the model decide what the prompt says, and `setKey`
- * decides whose story it is: batching a page of one gallery with a page of
+ * The language pair and the model decide what the prompt says, and the reading
+ * set decides whose story it is: batching a page of one gallery with a page of
  * another would put two unrelated works in front of the model at once, and the
- * continuity context attached to the request belongs to exactly one of them. A
- * page with no set key — a right-click on some arbitrary site — gets a lane of
- * its own, keyed by the element, so it can never be mixed with anything.
+ * continuity context attached to the request belongs to exactly one of them.
+ *
+ * `setKey` is the right answer when a site profile supplies one. Where none
+ * does, the reader's own page is the honest fallback — pages showing in the same
+ * document are the same book by construction. It used to fall back to the
+ * element key, which is unique per image and therefore put every page in a lane
+ * of its own: measured, that meant not one request carried more than one page on
+ * either target gallery, because neither has a profile. The query string and
+ * fragment are dropped because both sites move through a gallery by changing
+ * exactly those.
+ *
+ * A right-click needs no protection from this — it is dispatched alone whatever
+ * lane it names (background/read-batcher.ts).
  */
 function readLane(source: JobSource, from: string, to: string, model: string): string {
-  return `${from}|${to}|${model}|${source.setKey ?? `solo:${source.elementKey}`}`;
+  return `${from}|${to}|${model}|${source.setKey ?? documentLane(source.pageUrl)}`;
+}
+
+function documentLane(pageUrl: string): string {
+  try {
+    const u = new URL(pageUrl);
+    return `doc:${u.origin}${u.pathname}`;
+  } catch {
+    return `doc:${pageUrl}`;
+  }
 }
 
 /**

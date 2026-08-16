@@ -89,6 +89,19 @@ export interface JobSource {
    * entrypoints/background.ts.
    */
   distance?: number;
+  /**
+   * The image was actually intersecting the viewport when the job was queued.
+   *
+   * The IntersectionObserver starts work two screens early, so most automatic
+   * jobs are for pages the reader cannot see yet. Those two cases look identical
+   * to the worker and are not: a page on screen has someone waiting for it and
+   * must go out immediately, while a page still two screens away has about
+   * twelve seconds of slack at a normal reading pace and can wait a moment to
+   * share a request with its neighbours. Without this distinction batching never
+   * fires at all on a site with no prefetch profile — measured, zero multi-page
+   * requests across a four minute read.
+   */
+  onScreen?: boolean;
 }
 
 /* ---------- content script -> service worker (over a long-lived Port) ---------- */
