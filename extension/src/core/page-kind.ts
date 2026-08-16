@@ -21,6 +21,15 @@ export interface LaidOutBox {
   /** getBoundingClientRect size. Zero for a preloaded page with no layout yet. */
   w: number;
   h: number;
+  /**
+   * getBoundingClientRect().top — distance from the top of the viewport, so
+   * negative means scrolled past.
+   *
+   * Optional, and absent means "near enough to count". Every fixture written
+   * before this existed described a single screenful, which is exactly what
+   * that default preserves.
+   */
+  top?: number;
 }
 
 export interface PageShape {
@@ -57,6 +66,32 @@ export const DOMINANT_HEIGHT = 0.6;
 export const MAX_BYSTANDERS = 2;
 
 /**
+ * How far from the viewport a candidate may sit and still count as evidence.
+ *
+ * In viewport heights, above and below. This is the rule that makes long-strip
+ * galleries work at all, and it was measured rather than guessed: on a
+ * luscious.net album the reader is a vertical strip of full-width pages, and the
+ * document *also* carries a nine-image "you might also like" rail at the very
+ * bottom. Measured at three scroll positions, that rail sat 26,937-54,435 px
+ * below the viewport — between 35 and 71 screens away — while the pages being
+ * read were all within ±3,000 px. Counting the rail put bystanders at nine
+ * against a limit of two, so every album on that site was classified as a
+ * listing and auto-translate never ran: measured, 38 pages scrolled past in four
+ * minutes produced zero requests and zero overlays.
+ *
+ * Two screens is not an arbitrary radius. It is the same distance
+ * `entrypoints/content.ts` already uses for its IntersectionObserver margin —
+ * the region the pipeline is willing to start work in. Judging the shape of the
+ * page over exactly the region we would act on is the only version of this that
+ * stays consistent as the reader scrolls.
+ *
+ * It does not weaken the listing case that MAX_BYSTANDERS exists for: MangaDex's
+ * front page puts its hero carousel and its eight covers on the same screen, so
+ * all nine remain in range and it is still a listing.
+ */
+export const EVIDENCE_SCREENS = 2;
+
+/**
  * The verdict.
  *
  * Note which way this leans. "No candidate dominates" is a listing, and so is
@@ -81,6 +116,7 @@ export function classifyPage(shape: PageShape): PageKind {
     // direction, and counting it as a bystander would make MangaDex — which
     // keeps the next two pages in the DOM at 0x0 — look like a listing.
     if (box.w <= 0 || box.h <= 0) continue;
+    if (!inEvidenceRange(box, viewport.h)) continue;
     if (box.w >= viewport.w * DOMINANT_WIDTH || box.h >= viewport.h * DOMINANT_HEIGHT) dominant++;
     else bystanders++;
   }
@@ -88,4 +124,16 @@ export function classifyPage(shape: PageShape): PageKind {
   if (dominant === 0) return 'listing';
   if (bystanders > MAX_BYSTANDERS) return 'listing';
   return 'reader';
+}
+
+/**
+ * Is this box close enough to the reader to say anything about what they are
+ * doing?
+ *
+ * A box with no recorded position counts — see `LaidOutBox.top`.
+ */
+export function inEvidenceRange(box: LaidOutBox, viewportHeight: number): boolean {
+  if (box.top === undefined) return true;
+  const margin = viewportHeight * EVIDENCE_SCREENS;
+  return box.top < viewportHeight + margin && box.top + box.h > -margin;
 }

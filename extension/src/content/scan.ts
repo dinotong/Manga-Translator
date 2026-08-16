@@ -66,7 +66,11 @@ export function pageShape(profile: SiteProfile): PageShape {
     viewport: { w: window.innerWidth, h: window.innerHeight },
     candidates: scanImages(profile).map((img) => {
       const r = img.getBoundingClientRect();
-      return { w: r.width, h: r.height };
+      // `top` matters as much as the size on a long strip: a gallery's
+      // "you might also like" rail is a wall of covers by every other measure,
+      // and the only thing that says it is not what the reader is looking at is
+      // that it sits tens of screens below them. See core/page-kind.ts.
+      return { w: r.width, h: r.height, top: r.top };
     }),
   };
 }

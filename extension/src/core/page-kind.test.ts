@@ -113,3 +113,127 @@ describe('classifyPage — when we cannot tell', () => {
     expect(classifyPage(shape([1920, 1080], boxes.slice(0, 3)))).toBe('reader');
   });
 });
+
+/**
+ * Long-strip galleries, measured through CDP on 2026-08-16.
+ *
+ * These are the pages the owner reported as "translation cannot keep up". They
+ * were in fact not being translated at all: the album carries a recommendation
+ * rail far below the reader, and counting it made every album a listing.
+ */
+const placed = (
+  vp: [number, number],
+  boxes: [number, number, number][],
+): PageShape => ({
+  viewport: { w: vp[0], h: vp[1] },
+  candidates: boxes.map(([w, h, top]) => ({ w, h, top })),
+});
+
+describe('classifyPage — long strip with a recommendation rail', () => {
+  // luscious.net album reader at 1592x768, measured at three scroll positions.
+  // Pages: 1014x1434 within +-3000 px. Rail: nine 140x200 thumbnails, measured
+  // at top=26937..54435 — between 35 and 71 screens below the reader.
+  const rail = (top: number): [number, number, number][] =>
+    Array.from({ length: 9 }, () => [140, 200, top]);
+
+  it('reads an album as a reader page at the top of the strip', () => {
+    expect(
+      classifyPage(
+        placed([1592, 768], [
+          [1014, 1434, 150],
+          [1014, 1434, 1644],
+          [1014, 1434, 3139],
+          ...rail(54435),
+        ]),
+      ),
+    ).toBe('reader');
+  });
+
+  it('still reads as a reader page in the middle of the strip', () => {
+    expect(
+      classifyPage(
+        placed([1592, 768], [
+          [1014, 1434, -1958],
+          [1014, 1434, -463],
+          [1014, 1434, 1031],
+          [1014, 1434, 2775],
+          ...rail(26937),
+        ]),
+      ),
+    ).toBe('reader');
+  });
+
+  it('was a listing before the distance rule — the regression this fixes', () => {
+    // The same page with the rail's position unknown is exactly the old input,
+    // and it still classifies the old way. That is the behaviour being narrowed,
+    // not removed.
+    expect(
+      classifyPage({
+        viewport: { w: 1592, h: 768 },
+        candidates: [
+          { w: 1014, h: 1434 },
+          { w: 1014, h: 1434 },
+          { w: 1014, h: 1434 },
+          ...Array.from({ length: 9 }, () => ({ w: 140, h: 200 })),
+        ],
+      }),
+    ).toBe('listing');
+  });
+
+  it('becomes a listing again once the reader scrolls down to the rail', () => {
+    // At the very bottom of the album the rail is what is on screen, and there
+    // is no page dominating it. Nothing there is worth translating.
+    expect(
+      classifyPage(placed([1592, 768], [[1014, 1434, -4000], ...rail(120)])),
+    ).toBe('listing');
+  });
+
+  it('e-hentai MPV: pages at natural size stacked in a pane', () => {
+    // Measured: 1280x1808 images at 1592x768, tops 640 and 2474 in range,
+    // the rest scrolled far past or far ahead.
+    expect(
+      classifyPage(
+        placed([1592, 768], [
+          [1280, 1808, -10364],
+          [1280, 1808, -3028],
+          [1280, 1808, 640],
+          [1280, 1808, 2474],
+          [1280, 1808, 11644],
+        ]),
+      ),
+    ).toBe('reader');
+  });
+
+  it('keeps MangaDex’s front page a listing — its covers share the screen', () => {
+    // The hero carousel dominates, but the eight covers are right there with it,
+    // so distance changes nothing about this case.
+    expect(
+      classifyPage(
+        placed([1920, 1080], [
+          [1650, 420, 90],
+          ...Array.from({ length: 8 }, (_, i): [number, number, number] => [180, 256, 560 + (i % 2) * 40]),
+        ]),
+      ),
+    ).toBe('listing');
+  });
+
+  it('ignores a rail exactly one pixel beyond the evidence range', () => {
+    const vp: [number, number] = [1000, 800];
+    const margin = 800 * 2;
+    const justOut = 800 + margin; // top === viewportHeight + margin is out
+    expect(
+      classifyPage(placed(vp, [[900, 1200, 0], ...Array.from({ length: 9 }, (): [number, number, number] => [100, 140, justOut])])),
+    ).toBe('reader');
+    expect(
+      classifyPage(placed(vp, [[900, 1200, 0], ...Array.from({ length: 9 }, (): [number, number, number] => [100, 140, justOut - 1])])),
+    ).toBe('listing');
+  });
+
+  it('counts a tall candidate whose top is far above but whose body is on screen', () => {
+    // A webtoon strip taller than three screens: its top is way off, but the
+    // reader is looking at the middle of it.
+    expect(
+      classifyPage(placed([1000, 800], [[900, 9000, -4000]])),
+    ).toBe('reader');
+  });
+});
