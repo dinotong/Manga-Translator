@@ -50,13 +50,19 @@
         </select>
       </label>
 
+      <!--
+        ค่าเริ่มต้นของ 2 ช่องล่างนี้ต้อง "ตรงกับ extension" เสมอ (dilate 0.01 · NMS ปิด)
+        เพราะ main.ts เรียก setPostprocess() ด้วยค่าจากช่องพวกนี้ทุกครั้งที่รัน
+        ทับ PP_OCR_DEFAULTS — ถ้าตั้งไว้คนละค่า harness จะไม่ได้ตอบคำถามเกี่ยวกับ
+        โปรแกรมที่ผู้ใช้รันอยู่จริง (เคยเป็น 0.015/0.6 มาก่อน · D-038)
+      -->
       <label title="รัศมี dilate ก่อน connected components — คิดเป็นสัดส่วนของด้านยาวของ input">
         Dilate
         <select id="dilate">
           <option value="0">0 — ปิด (ได้ทีละตัวอักษร)</option>
           <option value="0.005">0.005 — แคบ</option>
-          <option value="0.01">0.01 — เดิม</option>
-          <option value="0.015" selected>0.015</option>
+          <option value="0.01" selected>0.01 — ตรงกับ extension</option>
+          <option value="0.015">0.015</option>
           <option value="0.02">0.02</option>
           <option value="0.03">0.03 — เสี่ยงรวม 2 bubble</option>
         </select>
@@ -65,9 +71,9 @@
       <label title="ตัดกล่องที่ซ้อนกันเกินค่านี้ เก็บอันที่ score สูงกว่า">
         NMS IoU
         <select id="nms">
-          <option value="1">ปิด</option>
+          <option value="1" selected>ปิด — ตรงกับ extension</option>
           <option value="0.8">0.8 — หลวม</option>
-          <option value="0.6" selected>0.6</option>
+          <option value="0.6">0.6</option>
           <option value="0.4">0.4 — เข้ม</option>
         </select>
       </label>

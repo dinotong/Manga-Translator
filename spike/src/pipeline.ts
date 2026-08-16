@@ -230,7 +230,18 @@ export async function runPipeline(
       const r = reading.items[i];
       if (r && isPlausible(r.src || r.out)) {
         emit(r.out || r.src, r.src, toNorm(c.block.rect, plan.det), c.block, 1);
+        return;
       }
+      // Two very different failures used to share one silent `if`, and the only
+      // trace either left was "10 blocks detected, 9 drawn" with nothing saying
+      // which block or why. `null` means the reply carried no item for this
+      // crop's id — a routing problem, worth knowing about. Text that fails
+      // `isPlausible` means the model answered and the answer was junk.
+      console.warn(
+        r === null || r === undefined
+          ? `[pipeline] block ${i + 1}/${live.length} got no item in the reply — dropped`
+          : `[pipeline] block ${i + 1}/${live.length} dropped as implausible: ${JSON.stringify((r.src || r.out).slice(0, 40))}`,
+      );
     });
 
     grouping.after = out.length;

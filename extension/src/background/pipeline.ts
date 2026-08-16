@@ -8,14 +8,17 @@ import {
   translationKey,
 } from '../cache/db';
 import { planMerges } from '../core/merge-proposals';
+import { detectScript } from '../core/script';
 import type { RoutedGroup } from '../core/batch';
 import { readPageBatched } from './read-batcher';
 import { putBytes, releaseBytes, takeBytes } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { textHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
+import { resolveDetectionLang, type SourceLang } from '../shared/lang';
 import type { JobSource, OverlayBlock, Stage } from '../shared/messages';
-import type { Settings } from '../shared/settings';
+import { saveSettings, type Settings } from '../shared/settings';
+import type { LangCode } from '../types';
 import { KeyRing } from '../translation/KeyRing';
 import { fetchImage } from './image-fetch';
 import { callOffscreen } from './offscreen-manager';
@@ -45,8 +48,10 @@ export async function runJob(
   settings: Settings,
   onProgress: (stage: Stage, detail?: string) => void,
   signal?: AbortSignal,
+  /** Internal: set on the one re-read allowed after `auto` learns it guessed wrong. */
+  reread = false,
 ): Promise<JobOutcome> {
-  const from = settings.lang.source;
+  const from = effectiveSource(settings, source.setKey);
   const to = settings.lang.target;
   // Opt-in. See shared/settings.ts for what it cost when it was not.
   const grouping = settings.translation.modelGrouping;
@@ -186,6 +191,28 @@ export async function runJob(
     }
   } finally {
     await Promise.all(detect.blocks.map((b) => releaseBytes(b.cropRef)));
+  }
+
+  /* ---- 4b. what language was that, actually? ---- */
+  //
+  // `auto` used to mean `ja` with no detection anywhere, and language is not
+  // just a label on the prompt: it picks the aspect-ratio threshold and fallback
+  // that decide whether a box is a column, which decides whether the panel is
+  // widened to 14% of the page and which grouping thresholds apply. An English
+  // chapter read as Japanese came back with 8 of 9 blocks called vertical, and
+  // panels bloomed sideways across their neighbours.
+  //
+  // The model has just handed back `src` for every crop, so the script is in
+  // hand for the cost of reading it. See core/script.ts, D-038.
+  const learned = await learnSource(settings, source.setKey, from, items);
+  if (learned && !reread) {
+    log.info(`page reads as ${learned}, not ${from} — re-running this page`);
+    onProgress('detect', `ตรวจพบภาษา ${learned} — อ่านใหม่รอบเดียว`);
+    // Re-read rather than carry on. Everything downstream of detection was
+    // computed under the wrong direction rules, so finishing this page would
+    // cache geometry we already know is wrong under a key we would then never
+    // revisit. One extra request, once per gallery.
+    return runJob(source, await withSource(settings, source.setKey, learned), onProgress, signal, true);
   }
 
   /* ---- 5. believe the model's grouping only where geometry agrees ---- */
@@ -374,6 +401,71 @@ async function translateCached(
     source: r.src,
     direction: r.direction,
   }));
+}
+
+/**
+ * The source language to actually work in for this reading set.
+ *
+ * A language the reader chose by hand always wins — `auto` is the only setting
+ * that is asking to be told. Below that, what a previous page of this same set
+ * turned out to be, and only then the raw setting.
+ */
+function effectiveSource(settings: Settings, setKey: string | null): SourceLang {
+  if (settings.lang.source !== 'auto') return settings.lang.source;
+  return (setKey ? settings.perSet[setKey]?.source : undefined) ?? 'auto';
+}
+
+/**
+ * Read the page's script off the reply, remember it for the set, and say so if
+ * it disagrees with what this page was processed as.
+ *
+ * Returns the language only when it is *different* from what was used, because
+ * that is the only case worth acting on. Agreement is still written down — that
+ * is what stops every page of a gallery paying for the same question.
+ *
+ * Only under `auto`. A reader who picked a language is not overruled by us,
+ * whatever the page looks like; if they picked wrong, the fix is the setting
+ * they already know about, not a silent correction they cannot see.
+ */
+async function learnSource(
+  settings: Settings,
+  setKey: string | null,
+  used: SourceLang,
+  items: readonly ({ src: string; out: string } | null)[],
+): Promise<LangCode | null> {
+  if (settings.lang.source !== 'auto' || !setKey) return null;
+  const detected = detectScript(items.map((i) => i?.src ?? '').join('\n'));
+  if (!detected) return null;
+
+  const known = settings.perSet[setKey]?.source;
+  if (known !== detected) {
+    try {
+      await withSource(settings, setKey, detected);
+    } catch (err) {
+      // Not fatal: the worst case is asking the same question again next page.
+      log.warn(`could not remember detected language: ${String(err)}`);
+    }
+  }
+  // `used` is 'auto' on the very first page of a set, and resolveDetectionLang
+  // turns that into 'ja' for every geometric decision — so 'auto' and a detected
+  // 'ja' are the same processing and need no re-read.
+  const wasTreatedAs = resolveDetectionLang(used);
+  return detected === wasTreatedAs ? null : detected;
+}
+
+/** `settings` with this set's source language pinned, saved and returned. */
+async function withSource(
+  settings: Settings,
+  setKey: string | null,
+  lang: LangCode,
+): Promise<Settings> {
+  if (!setKey) return settings;
+  const perSet = { ...settings.perSet, [setKey]: { ...settings.perSet[setKey], source: lang } };
+  try {
+    return await saveSettings({ perSet });
+  } catch {
+    return { ...settings, perSet };
+  }
 }
 
 /** Bytes, from whichever of the two acquisition paths applies. */
