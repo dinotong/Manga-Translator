@@ -1440,6 +1440,8 @@ IntersectionObserver ก็ช่วยไม่ได้เพราะ element
 ## D-021 · Chrome บนเครื่องนี้ล็อก Developer mode → **แนะนำ Edge เป็นทางแรก** ไม่ใช่ให้ไปขอ IT
 **2026-08-15 · `extension/INSTALL.md` ขั้นที่ 3ข**
 
+> **อัปเดต 2026-10-08:** ผู้สั่งงานเปิด Developer mode ใน Chrome ได้แล้ว และโหลด/รีโหลดส่วนเสริม 1.0.0 ขึ้นใน Chrome สำเร็จ — ข้อจำกัดของเครื่องนี้หมดไป คำแนะนำ Edge ใน INSTALL.md ยังมีประโยชน์กับเครื่องอื่นที่ถูก policy ล็อก จึงเก็บไว้
+
 Chrome ที่ติดตั้งบนเครื่องนี้ขึ้นว่า **“Developer mode — This setting is managed by your administrator”** และ `--load-extension` ถูกเมินเงียบๆ (ไม่มี error, extension แค่ไม่โผล่)
 
 **สิ่งที่ตรวจ registry แล้วพบ — และเปลี่ยนคำแนะนำ:**

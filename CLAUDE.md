@@ -87,7 +87,7 @@ cd extension && npm run zip     # แพ็กเกจแจกเพื่อ�
 cd spike && npx tsc --noEmit && npm test   # harness
 ```
 
-ทดสอบในเบราว์เซอร์: ใช้ Edge (Chrome เครื่องนี้ล็อก Developer mode — D-021)
+ทดสอบในเบราว์เซอร์: Chrome ใช้ Developer mode ได้แล้ว (ผู้สั่งงานยืนยัน 2026-10-08 — D-021 หมดอายุ) · เว็บที่ต้อง login ยังใช้ Edge profile `D:\mt-profile`
 
 ## ภาษา
 
