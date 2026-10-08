@@ -393,8 +393,8 @@ function Options() {
         </select>
       </section>
 
-      <section>
-        <h2>การรวมกล่องข้อความ</h2>
+      <details class="adv">
+        <summary>ขั้นสูง — การรวมกล่องข้อความ</summary>
         <p class="hint">
           ปกติแต่ละกล่องที่ตรวจเจอจะถูกแปลแยกกัน หัวข้อนี้คือข้อยกเว้นข้อเดียวของกฎนั้น
         </p>
@@ -427,7 +427,7 @@ function Options() {
           <br />
           ปิดแล้ว<b>มีผลกับหน้าที่เคยอ่านไปแล้วด้วย</b> ไม่ต้องล้างแคช และได้พฤติกรรมเดิมเป๊ะ
         </p>
-      </section>
+      </details>
 
       <section>
         <h2>การแสดงผล</h2>
@@ -509,8 +509,8 @@ function Options() {
         </p>
       </section>
 
-      <section>
-        <h2>ขั้นสูง — การตรวจจับข้อความ</h2>
+      <details class="adv">
+        <summary>ขั้นสูง — การตรวจจับข้อความ</summary>
         <p class="hint">ค่าเริ่มต้นใช้ได้เลย แตะเมื่อผลลัพธ์ไม่ดีเท่านั้น</p>
 
         <label>Runtime</label>
@@ -520,11 +520,11 @@ function Options() {
             void patch({ ocr: { ...s.ocr, runtime: (e.target as HTMLSelectElement).value as Settings['ocr']['runtime'] } })
           }
         >
-          <option value="auto">อัตโนมัติ (WebGPU ก่อน แล้วค่อย WASM)</option>
-          <option value="webgpu">WebGPU เท่านั้น</option>
-          <option value="wasm">WASM เท่านั้น</option>
+          <option value="auto">อัตโนมัติ (ใช้การ์ดจอถ้าได้)</option>
+          <option value="webgpu">การ์ดจอ (WebGPU) เท่านั้น</option>
+          <option value="wasm">CPU (WASM) เท่านั้น — ช้ากว่า แต่ใช้ได้ทุกเครื่อง</option>
         </select>
-        <p class="hint">วัดจริงบน RTX 3060: WebGPU ~120 มิลลิวินาที/หน้า · WASM ~710 มิลลิวินาที/หน้า</p>
+        <p class="hint">ใช้การ์ดจอเร็วกว่า CPU ประมาณ 6 เท่า (วัดจริงได้ 0.12 กับ 0.71 วินาทีต่อหน้า)</p>
 
         <label>ความละเอียด</label>
         <select
@@ -540,7 +540,7 @@ function Options() {
           ))}
         </select>
 
-        <label>การรวมตัวอักษรเป็นบรรทัด (dilate {s.ocr.dilateRatio.toFixed(3)})</label>
+        <label>การรวมตัวอักษรเป็นบรรทัด ({s.ocr.dilateRatio.toFixed(3)})</label>
         <input
           type="range" min="0" max="0.03" step="0.0025"
           value={String(s.ocr.dilateRatio)}
@@ -549,9 +549,9 @@ function Options() {
           }
         />
         <p class="hint">
-          สูงเกินไป = สอง bubble ติดกันถูกรวมเป็นอันเดียว · ต่ำเกินไป = ได้ตัวอักษรทีละตัว
+          สูงเกินไป = สองบอลลูนที่อยู่ติดกันถูกรวมเป็นอันเดียว · ต่ำเกินไป = ได้ตัวอักษรทีละตัว
         </p>
-      </section>
+      </details>
 
       <section>
         <h2>แปลล่วงหน้า</h2>
@@ -635,7 +635,7 @@ function Options() {
         <p class="hint">
           หนึ่งงาน = โหลดรูป + หากล่องข้อความ + ส่งให้ Gemini · วัดจริงแล้ว <b>97% ของเวลาคือรอ Gemini ตอบ</b>
           (0.1–0.5 วินาทีหากล่อง เทียบกับ 1.3–41 วินาทีรอเน็ต) จึงทำหลายงานพร้อมกันได้ ·
-          <b>การหากล่องยังทำทีละรูป</b>เสมอ เพราะ ONNX session ใช้ซ้อนกันไม่ได้ ·
+          <b>การหากล่องยังทำทีละรูป</b>เสมอ ·
           หนึ่งช่องถูกกันไว้ให้หน้าที่คุณกำลังดูเสมอ การเดาจะไม่มีวันแย่งไปหมด
         </p>
       </section>
