@@ -20,7 +20,7 @@ speech bubbles.
 | `storage` | Stores the user's settings and their own Gemini API key in `chrome.storage.local`. Never synced. |
 | `contextMenus` | Adds "Translate this image" to the right-click menu so a user can translate one image on any site without enabling automatic translation there. |
 | `activeTab` | Lets the right-click action work on the current tab without granting standing access to it. |
-| Host permission `<all_urls>` | (1) Manga images are usually served from a different domain (a CDN) than the reading site; reading their pixels requires fetching them from the service worker. (2) Sending the cropped text regions to the Gemini API. The extension only scans pages on sites the user has explicitly switched on, or an image the user right-clicks. |
+| Host permission `<all_urls>` | (1) Manga images are usually served from a different domain (a CDN) than the reading site; reading their pixels requires fetching them from the service worker. (2) Sending the cropped text regions to the Gemini API. The content script is declared for all pages so the right-click action and per-site switch work anywhere, but on a site the user has not switched on it only reads its settings and stays idle: no image is read and nothing is sent. |
 
 ## Remote code
 
@@ -32,13 +32,18 @@ detection model (`models/ppocr-v4-det.onnx`) is bundled data, not code.
 - Collected by the developer: **nothing**. There is no developer server.
 - Sent to a third party: cropped text regions of images and the user's API key,
   to the Google Gemini API, only when the user asks for a translation.
-- Privacy policy: `docs/privacy.md` (publish its URL once the repository is public).
+- Form categories to tick: **Website content** (image crops) and **Authentication information** (the user's own API key, sent only to Google).
+- Not sold, not used for anything unrelated to the single purpose, not used for credit decisions.
+- Privacy policy URL: https://github.com/dinotong/Manga-Translator/blob/main/docs/privacy.md
 
 ## Listing
 
 - Name: Manga Translator
 - Category: Productivity (or Accessibility)
-- Screenshots: use MangaDex pages only. Never screenshot adult sites for the listing.
+- Screenshots (1280x800, 1 to 5): **an original sample page we own**, not pages from a real manga.
+  A published manga's pages in our listing are someone else's copyrighted art and a takedown risk.
+  Never screenshot adult sites for the listing.
+- Small promo tile 440x280 (the store asks for it), marquee 1400x560 optional.
 - Icon: `public/icon/128.png`
 
 ## Known review risks
