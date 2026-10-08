@@ -1,3 +1,4 @@
+import { deadline } from '../core/deadline';
 import { joinLayoutBreaks } from '../core/reflow';
 import {
   cropId,
@@ -32,6 +33,13 @@ const log = makeLog('gemini');
  * runs under the *page's* CSP, so a site with a strict connect-src would break
  * translation on that site only — an impossible-to-diagnose bug report.
  */
+
+/**
+ * How long one request may stay open. Replies normally take 3 to 50 seconds; a
+ * 503 measured almost five minutes after sending is what this cuts short. Above
+ * the slow end with room to spare, since a multi-page batch is one request.
+ */
+export const REQUEST_TIMEOUT_MS = 90_000;
 
 export interface GeminiConfig {
   apiKey: string;
@@ -331,6 +339,27 @@ export class GeminiProvider {
     parts: unknown[],
     signal?: AbortSignal,
   ): Promise<{ items: ReadItem[]; groups: ReadGroup[] }> {
+    const limit = deadline(REQUEST_TIMEOUT_MS, signal);
+    try {
+      return await this.request(parts, limit.signal);
+    } catch (err) {
+      if (limit.expired()) {
+        throw new PipelineError(
+          'PROVIDER_BUSY',
+          `no reply from Gemini in ${REQUEST_TIMEOUT_MS / 1000} s`,
+        );
+      }
+      if (signal?.aborted) throw new PipelineError('CANCELLED', 'aborted');
+      throw err;
+    } finally {
+      limit.clear();
+    }
+  }
+
+  private async request(
+    parts: unknown[],
+    signal: AbortSignal,
+  ): Promise<{ items: ReadItem[]; groups: ReadGroup[] }> {
     let res: Response;
     try {
       res = await fetch(`${ENDPOINT}/${encodeURIComponent(this.cfg.model)}:generateContent`, {
@@ -348,10 +377,11 @@ export class GeminiProvider {
             temperature: 0.3,
           },
         }),
-        ...(signal ? { signal } : {}),
+        signal,
       });
     } catch (err) {
-      if (signal?.aborted) throw new PipelineError('CANCELLED', 'aborted');
+      // Aborted by the caller or by the deadline: `call` tells the two apart.
+      if (signal.aborted) throw err;
       throw new PipelineError('OFFLINE', `could not reach Gemini: ${String(err)}`);
     }
 

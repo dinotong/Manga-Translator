@@ -14,13 +14,13 @@
 - ✅ รีโปเป็น public แล้ว (2026-10-08) · ลิงก์ Issues อยู่ใน docs/privacy.md · **รายการข้อ 1 ครบ**
 - ✅ **เบต้า A เริ่มแล้ว 2026-10-09**: [Release v1.0.0](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.0) ติด Pre-release · zip 10,843,430 bytes (build หลัง `3df42ee` · grep `AIza` ไม่เจอ) · ปลดป้าย Pre-release เมื่อจบเบต้า 2 สัปดาห์ → ต่อ Web Store + Edge
 - 🆕 **เจอ 2026-10-09 ตอนถ่ายภาพหน้าร้าน (ยังไม่แก้):**
-  - คำขอ Gemini **ไม่มี timeout** (`GeminiProvider.call`) — วัดได้: ส่ง 17:19:53 ได้ 503 `PROVIDER_BUSY` กลับมาเกือบ 5 นาทีหลัง ระหว่างนั้นป้ายขึ้น "กำลังแปล" ค้าง ผู้อ่านไม่รู้ว่าควรรอหรือกดใหม่
+  - ✅ แก้แล้ว (1.0.1): timeout 90 วิ (`core/deadline.ts`) → `PROVIDER_BUSY` บอกให้ลองใหม่ · เดิม: คำขอ Gemini **ไม่มี timeout** (`GeminiProvider.call`) — วัดได้: ส่ง 17:19:53 ได้ 503 `PROVIDER_BUSY` กลับมาเกือบ 5 นาทีหลัง ระหว่างนั้นป้ายขึ้น "กำลังแปล" ค้าง ผู้อ่านไม่รู้ว่าควรรอหรือกดใหม่
   - ป้ายสถานะ error ถูกบีบเป็นคอลัมน์กว้าง ~60 px บนรูปที่ย่อ (reader 1280×800 ภาพสูง 800) — ข้อความยาวอ่านยาก
   - ✅ แก้แล้ว: Gemini เลียนคอลัมน์แนวตั้ง ส่งคำแปลมาบรรทัดละพยางค์ → HTML กลายเป็น "อา รุ ณ ส วั ส ดิ์" · `core/reflow.ts` รวมบรรทัดตามชนิดตัวอักษร ใช้ทั้งตอนรับคำตอบและตอนวาด (แคชเก่าหายด้วย)
   - ✅ แก้แล้ว: เพดานข้อความสั้นทำให้ตัวเล็ก ~13 px → เปลี่ยนเป็นเพดานตาม**คำที่ยาวที่สุด** (`longestWordGlyphs`) + ตัดบรรทัดที่ขอบคำ
   - ✅ แก้แล้ว: ตัดกลางคำ → `word-break: normal` + `overflow-wrap: break-word` + `min-width: min-content`
   - ✅ แก้แล้ว: เศษหมึก → `inkRect` ขยายกรอบ 1% ของความกว้างรูปทุกด้าน
-  - ✅ ภาพหน้าร้าน `extension/store-assets/screenshot-1-1280x800.png` · วัดซ้ำ MangaDex 25 กล่อง: ทับจากการขยาย 0 · plate หลุด 0 · ล้นขอบ 0 · ข้อความล้นกล่อง 0
+  - ✅ ภาพหน้าร้าน 3 ภาพ + promo tile ครบ (`extension/store-assets/`) · zip **1.0.1** พร้อมอัปโหลด · ภาพแรก `screenshot-1-1280x800.png` · วัดซ้ำ MangaDex 25 กล่อง: ทับจากการขยาย 0 · plate หลุด 0 · ล้นขอบ 0 · ข้อความล้นกล่อง 0
   - ✅ แก้แล้ว: ข้อความ error บอกให้ "ดู console" แต่ไม่เคย log อะไรลง console — ตอนนี้ log `[mt:content] CODE: message` แล้ว
 - วิธีวัดกล่องใน closed shadow root: `take_snapshot` ให้ uid ของข้อความใน overlay → ส่ง uid เข้า `evaluate_script` → `getRootNode()` ได้ shadow root
 - เครื่องมือ: `.mcp.json` มี chrome-devtools-mcp (extensions + autoConnect) · ต้องติ๊ก remote debugging ที่ chrome://inspect/#remote-debugging ทุกครั้งที่เปิด Chrome

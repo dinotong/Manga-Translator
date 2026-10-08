@@ -69,6 +69,18 @@
 > Open source (Apache-2.0): https://github.com/dinotong/Manga-Translator
 > Issues: https://github.com/dinotong/Manga-Translator/issues
 
+## ไฟล์ภาพ (อัปโหลดตามลำดับนี้)
+
+| ช่อง | ไฟล์ |
+|---|---|
+| ไอคอน 128×128 | `../public/icon/128.png` |
+| ภาพหน้าจอ 1 | `screenshot-1-1280x800.png` — หน้ามังงะที่แปลแล้ว |
+| ภาพหน้าจอ 2 | `screenshot-2-1280x800.png` — เปิดสวิตช์ต่อเว็บจาก popup |
+| ภาพหน้าจอ 3 | `screenshot-3-1280x800.png` — ใส่ key ของตัวเองในหน้าตั้งค่า |
+| Small promo tile 440×280 | `promo-small-440x280.png` |
+
+ทุกภาพถ่ายบนหน้าตัวอย่างที่วาดเอง (`sample-page.html`) · label ของ key ในภาพ 3 เปลี่ยนเป็น "key 1-3" เฉพาะบนจอตอนถ่าย ไม่ได้บันทึก
+
 ## ช่องอื่นในฟอร์ม
 
 - หมวดหมู่: Productivity
