@@ -11,7 +11,7 @@
 - ✅ พิสูจน์บน Chrome แล้ว: Diagnostics 6/6 เขียว (โมเดลมากับแพ็กเกจ · WebGPU · gemini-flash-lite-latest ตอบ) · ตัวอักษรสั้นอ่านออก
 - ✅ **ข้อ 1.3 ผ่าน** (`3df42ee`): เจอกล่องขยายทับจริงทั้ง 2 เว็บ → แก้ (เพดานข้อความสั้น + `settlePanels` วัดขนาดจริงแล้วเลื่อนหลบ) → วัดซ้ำทับ 0 คู่ · ตัวเลขเต็มใน 04 · extension 576/576
 - ✅ ปลดป้าย ยังไม่ออก ใน CHANGELOG แล้ว
-- ⏳ **รอผู้สั่งงาน: เปิดรีโป dinotong/Manga-Translator เป็น public** → แล้วใส่ลิงก์ Issues ใน docs/privacy.md (บรรทัด 41)
+- ✅ รีโปเป็น public แล้ว (2026-10-08) · ลิงก์ Issues อยู่ใน docs/privacy.md · **รายการข้อ 1 ครบ** → ต่อไปคือเบต้า A ผ่าน GitHub Releases
 - วิธีวัดกล่องใน closed shadow root: `take_snapshot` ให้ uid ของข้อความใน overlay → ส่ง uid เข้า `evaluate_script` → `getRootNode()` ได้ shadow root
 - เครื่องมือ: `.mcp.json` มี chrome-devtools-mcp (extensions + autoConnect) · ต้องติ๊ก remote debugging ที่ chrome://inspect/#remote-debugging ทุกครั้งที่เปิด Chrome
 - Safari/iOS วิจัยแล้ว ยังไม่ทำ: [05-safari-ios-research.md](05-safari-ios-research.md)
