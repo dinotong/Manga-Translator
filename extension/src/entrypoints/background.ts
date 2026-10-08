@@ -355,12 +355,13 @@ async function diagnose(): Promise<DiagnosticLine[]> {
     lines.push({
       id: 'model',
       label: 'โมเดลตรวจจับข้อความ',
-      status: caps && caps.modelBytes > 0 ? 'ok' : 'warn',
+      // The model ships in the package, so missing means a damaged install.
+      status: caps && caps.modelBytes > 0 ? 'ok' : 'fail',
       detail:
         caps && caps.modelBytes > 0
-          ? `ดาวน์โหลดแล้ว ${(caps.modelBytes / 1e6).toFixed(1)} MB`
-          : 'ยังไม่ได้ดาวน์โหลด (4.7 MB — จะโหลดอัตโนมัติครั้งแรกที่แปล)',
-      fix: caps && caps.modelBytes > 0 ? '' : 'กด "อุ่นเครื่อง" ในหน้านี้ หรือแปลรูปสักหน้าหนึ่ง',
+          ? `มากับส่วนเสริมแล้ว ${(caps.modelBytes / 1e6).toFixed(1)} MB`
+          : 'ไม่พบไฟล์โมเดลในส่วนเสริม',
+      fix: caps && caps.modelBytes > 0 ? '' : 'ไฟล์ติดตั้งไม่ครบ — ถอนแล้วติดตั้งใหม่',
     });
   } catch (err) {
     lines.push({

@@ -18,9 +18,9 @@ PP-OCRv4 mobile text detection model (ch_PP-OCRv4_det_infer.onnx)
   Copyright (c) PaddlePaddle Authors
   Licensed under the Apache License, Version 2.0.
   https://github.com/PaddlePaddle/PaddleOCR
-  NOT bundled. Downloaded at first use into the browser's Cache Storage
-  from https://huggingface.co/SWHL/RapidOCR (a mirror of the upstream
-  release). Used only to locate text regions, never to recognise them.
+  Bundled, unmodified, as models/ppocr-v4-det.onnx (obtained from the
+  https://huggingface.co/SWHL/RapidOCR mirror of the upstream release).
+  Used only to locate text regions, never to recognise them.
 
 Preact
   Copyright (c) 2015-present Jason Miller

@@ -20,6 +20,11 @@ models/
 
 spike/public/models/
 
+# The detector ships inside the extension (docs/04-public-release-plan.md 1.2):
+# a stranger's install must not depend on someone else's mirror staying up.
+!extension/public/models/
+!extension/public/models/ppocr-v4-det.onnx
+
 # Benchmark fixtures (copyrighted manga pages — never commit)
 fixtures/pages/
 spike/samples/
