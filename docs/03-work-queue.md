@@ -7,10 +7,12 @@
 
 **กำลังเตรียมเปิดให้คนอื่นโหลดใช้** — แผนเต็ม + สถานะทีละข้อ: [04-public-release-plan.md](04-public-release-plan.md)
 
-- v1.0.0 · extension 569/569 · tsc สะอาด · zip 10.8 MB · Chrome ใช้ Developer mode ได้แล้ว (D-021 หมดอายุ)
+- v1.0.0 · extension 576/576 · tsc สะอาด · zip 10.8 MB · Chrome ใช้ Developer mode ได้แล้ว (D-021 หมดอายุ)
 - ✅ พิสูจน์บน Chrome แล้ว: Diagnostics 6/6 เขียว (โมเดลมากับแพ็กเกจ · WebGPU · gemini-flash-lite-latest ตอบ) · ตัวอักษรสั้นอ่านออก
-- ⏳ **ค้างข้อ 1.3:** กล่องคำแปลที่ขยายตามขนาดขั้นต่ำ 13px ทับกล่องข้างๆ ไหม (placePanels คิดจากขนาดก่อนขยาย) · MangaDex/imhentai ไม่พัง
-- หลัง 1.3 ผ่าน: ปลดป้าย ยังไม่ออก ใน extension/CHANGELOG.md → เปิดรีโป public → ใส่ลิงก์ Issues ใน docs/privacy.md
+- ✅ **ข้อ 1.3 ผ่าน** (`3df42ee`): เจอกล่องขยายทับจริงทั้ง 2 เว็บ → แก้ (เพดานข้อความสั้น + `settlePanels` วัดขนาดจริงแล้วเลื่อนหลบ) → วัดซ้ำทับ 0 คู่ · ตัวเลขเต็มใน 04 · extension 576/576
+- ✅ ปลดป้าย ยังไม่ออก ใน CHANGELOG แล้ว
+- ⏳ **รอผู้สั่งงาน: เปิดรีโป dinotong/Manga-Translator เป็น public** → แล้วใส่ลิงก์ Issues ใน docs/privacy.md (บรรทัด 41)
+- วิธีวัดกล่องใน closed shadow root: `take_snapshot` ให้ uid ของข้อความใน overlay → ส่ง uid เข้า `evaluate_script` → `getRootNode()` ได้ shadow root
 - เครื่องมือ: `.mcp.json` มี chrome-devtools-mcp (extensions + autoConnect) · ต้องติ๊ก remote debugging ที่ chrome://inspect/#remote-debugging ทุกครั้งที่เปิด Chrome
 - Safari/iOS วิจัยแล้ว ยังไม่ทำ: [05-safari-ios-research.md](05-safari-ios-research.md)
 - ข้อค้างเดิม (คุณภาพคำแปล · งานที่ทิ้ง · afterword · 10→9 กล่อง) ยังอยู่ในบล็อก 2026-08-16 ข้างล่าง
