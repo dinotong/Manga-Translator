@@ -10,6 +10,7 @@ Chrome Extension (MV3) ที่แปลมังงะญี่ปุ่นเ
 - [docs/01-implementation-plan.md](docs/01-implementation-plan.md) — milestone M0–M7 และ definition of done
 - [docs/02-local-model-selection.md](docs/02-local-model-selection.md) — โมเดล Ollama สำหรับ RTX 3060 6GB (ใช้ตอน M6)
 - [docs/04-public-release-plan.md](docs/04-public-release-plan.md) — แผนเปิดให้คนอื่นโหลดใช้ + สิ่งที่รอผู้สั่งงานตัดสิน
+- [docs/05-safari-ios-research.md](docs/05-safari-ios-research.md) — Safari/iOS: ทำได้ไหม ชนสถาปัตยกรรมตรงไหน
 
 > ถ้าจะเปลี่ยนอะไรที่ขัดกับ `00-technical-design.md` ให้เขียน ADR ใน `docs/decisions/` ก่อน
 
