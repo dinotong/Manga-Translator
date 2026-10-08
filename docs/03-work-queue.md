@@ -7,7 +7,7 @@
 
 **แจกให้เพื่อนได้แล้ว** — `npm run zip` ใน `extension/` · คู่มือที่ [install-for-friends.md](install-for-friends.md) · ตรวจแล้วว่าไม่มี API key ติดในแพ็กเกจ
 
-**547 tests (extension) · 477 (spike) · tsc สะอาดทั้งสองแพ็กเกจ**
+**547 tests (extension) · 501 (spike) · tsc สะอาดทั้งสองแพ็กเกจ** — วัดซ้ำ 2026-10-08: 547/547 · 501/501 (spike เดิมจดไว้ 477)
 
 ### ที่แก้ในรอบนี้ และวัดบนเบราว์เซอร์จริงแล้ว
 

@@ -14,8 +14,8 @@ Chrome Extension (MV3) ที่แปลมังงะญี่ปุ่นเ
 
 ## สถานะปัจจุบัน
 
-**M0 (Spike & Benchmark) — ยังไม่เริ่ม** ยังไม่มีโค้ดในโปรเจกต์
-M0 เป็น gate: ผลลัพธ์ความเร็ว OCR เป็นตัวตัดสินว่า default runtime คือ WASM หรือ Local Service
+**Extension ใช้งานจริงแล้ว และแจกเพื่อนได้** (ณ 2026-08-16) — M0 gate ปิดแล้ว: manga-ocr ในเบราว์เซอร์ตก → Gemini vision
+สถานะ + งานค้างเรียงลำดับ อยู่ที่บล็อกบนสุดของ [docs/03-work-queue.md](docs/03-work-queue.md) — **อ่านที่นั่น อย่าเชื่อเลขในไฟล์นี้**
 
 ## Pipeline
 
@@ -78,7 +78,14 @@ TypeScript (strict) · WXT + Vite · onnxruntime-web + transformers.js · Preact
 
 ## คำสั่ง
 
-ยังไม่มี — จะเพิ่มเมื่อเริ่ม M0
+```bash
+cd extension && npm run check   # tsc + vitest
+cd extension && npm run build   # WXT build
+cd extension && npm run zip     # แพ็กเกจแจกเพื่อน (docs/install-for-friends.md)
+cd spike && npx tsc --noEmit && npm test   # harness
+```
+
+ทดสอบในเบราว์เซอร์: ใช้ Edge (Chrome เครื่องนี้ล็อก Developer mode — D-021)
 
 ## ภาษา
 
