@@ -16,6 +16,7 @@ import {
 } from '../../core/prefetch';
 import { clampInFlight, MAX_IN_FLIGHT_CEILING } from '../../core/scheduling';
 import { MAX_PAGES_PER_REQUEST } from '../../core/batch';
+import { formatDiagnostics } from '../../core/diag-report';
 import {
   type ApiKeyEntry,
   keyFingerprint,
@@ -79,7 +80,25 @@ function Options() {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [lines, setLines] = useState<DiagnosticLine[] | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  const [copyMsg, setCopyMsg] = useState('');
   const [stats, setStats] = useState<CacheStats | null>(null);
+
+  // Text for a bug report. formatDiagnostics masks anything shaped like an API
+  // key, so pasting this into a public issue cannot leak one.
+  async function copyReport(ls: DiagnosticLine[]): Promise<void> {
+    const text = formatDiagnostics(ls, {
+      version: chrome.runtime.getManifest().version,
+      userAgent: navigator.userAgent,
+      at: new Date().toISOString(),
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyMsg('คัดลอกแล้ว — วางในช่องแจ้งปัญหาได้เลย');
+    } catch {
+      setCopyMsg('คัดลอกไม่ได้ — เบราว์เซอร์ไม่อนุญาต');
+    }
+    setTimeout(() => setCopyMsg(''), 4000);
+  }
 
   useEffect(() => {
     void loadSettings().then(setS);
@@ -746,6 +765,12 @@ function Options() {
             {diagBusy ? 'กำลังตรวจ…' : 'ตรวจสอบระบบ'}
           </button>
           <button onClick={() => void send({ t: 'PREWARM' })}>อุ่นเครื่องโมเดล</button>
+          {lines && (
+            <button title="ไม่มี API key ติดไปด้วย" onClick={() => void copyReport(lines)}>
+              คัดลอกผลไว้แจ้งปัญหา
+            </button>
+          )}
+          {copyMsg && <span class="hint">{copyMsg}</span>}
         </div>
 
         {lines && (
@@ -766,7 +791,7 @@ function Options() {
       </section>
 
       <p class="foot">
-        Apache-2.0 · ตัวตรวจจับข้อความคือ PP-OCRv4 det (Apache-2.0) ดาวน์โหลดครั้งแรก 4.7 MB
+        Apache-2.0 · ตัวตรวจจับข้อความคือ PP-OCRv4 det (Apache-2.0) มากับส่วนเสริม 4.7 MB
       </p>
     </div>
   );
