@@ -1,6 +1,6 @@
 {
   "name": "manga-translator-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Chrome MV3 extension that translates manga in place while you read.",
