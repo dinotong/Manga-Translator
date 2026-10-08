@@ -4,7 +4,8 @@ import type { Settings } from '../../shared/settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
 import { placePanels } from '../../core/panel-layout';
-import { panelRect, plateAlphaOver, plateInPanel } from '../../core/panel-shape';
+import { fitFont, plateFromCentre } from '../../core/font-fit';
+import { panelRect, plateAlphaOver } from '../../core/panel-shape';
 
 /**
  * The overlay layer.
@@ -375,39 +376,29 @@ export class Overlay {
    * Nested rather than side by side so that one bubble stays one element as far
    * as everything else is concerned — hover, peeking, hit-testing and the
    * `boxes`/`rects` pairing all address the panel and the plate follows it. The
-   * plate is positioned in the panel's own frame, which is what `plateInPanel`
+   * plate is positioned from the panel's centre, which is what `plateFromCentre`
    * converts to.
    *
    * Font size is computed here rather than by CSS because it depends on how much
-   * text has to fit. Two unit traps live in this calculation: rect is normalized
-   * [0,1] and means nothing until scaled to container percent, and `cqw` is a
-   * fraction of the container's WIDTH only — so a box's height must be converted
-   * through the image's aspect ratio or every tall vertical bubble is judged far
-   * shorter than it is and its text comes out tiny.
+   * text has to fit — see core/font-fit.ts. The panel is positioned by its
+   * centre so that, when the pixel floor wins over the area-based size, it grows
+   * evenly in every direction instead of only to the right and down.
    */
   private renderBox(b: OverlayBlock, panel: NormRect, aspect: number): string {
     const pct = (v: number) => (v * 100).toFixed(3);
-    const wCqw = panel.w * 100;
-    const hCqw = panel.h * 100 * aspect;
-
-    // A box holds about w*h / (1.2*s^2) roughly-square glyphs at size s with 1.2
-    // line spacing. Solve for s at N characters.
-    const chars = Math.max(1, b.text.length);
-    const ideal = Math.sqrt((wCqw * hCqw) / (1.2 * chars));
-    // 0.92 leaves room for padding and imperfect wrapping; the clamp stops a
-    // two-word bubble from becoming a poster.
-    const fs = Math.max(1.2, Math.min(6, ideal * 0.92)) * this.settings.display.fontScale;
+    const fit = fitFont(panel, aspect, b.text, this.settings.display.fontScale);
 
     const hover = this.settings.display.mode === 'target-plus-source-on-hover' && b.source;
     const style =
-      `left:${pct(panel.x)}%;top:${pct(panel.y)}%;` +
+      `left:${pct(panel.x + panel.w / 2)}%;top:${pct(panel.y + panel.h / 2)}%;` +
       `width:${pct(panel.w)}%;height:${pct(panel.h)}%;` +
-      `font-size:${fs.toFixed(2)}cqw;` +
+      `font-size:max(${fit.cqw.toFixed(2)}cqw,${fit.minPx.toFixed(1)}px);` +
       `--mt-panel-opacity:${this.settings.display.panelOpacity}`;
+    const cls = `mt-box${b.refused ? ' refused' : ''}${fit.short ? ' short' : ''}`;
 
     return (
-      `<div class="mt-box${b.refused ? ' refused' : ''}" style="${style}"${hover ? ' data-hover="1"' : ''}>` +
-      this.renderPlate(b, panel) +
+      `<div class="${cls}" style="${style}"${hover ? ' data-hover="1"' : ''}>` +
+      this.renderPlate(b, panel, aspect) +
       `<span class="mt-text">${escapeHtml(b.text)}</span>` +
       (hover ? `<span class="mt-src">${escapeHtml(b.source)}</span>` : '') +
       '</div>'
@@ -424,7 +415,7 @@ export class Overlay {
    * the coincident case (horizontal text, panel not widened) from stacking two
    * elements and coming out darker than either setting asked for.
    */
-  private renderPlate(b: OverlayBlock, panel: NormRect): string {
+  private renderPlate(b: OverlayBlock, panel: NormRect, aspect: number): string {
     if (b.refused) return '';
     const alpha = plateAlphaOver(
       this.settings.display.plateOpacity,
@@ -432,11 +423,13 @@ export class Overlay {
     );
     if (alpha <= 0) return '';
 
-    const pct = (v: number) => (v * 100).toFixed(3);
-    const p = plateInPanel(b.rect, panel);
+    // Offsets from the panel centre in cqw, not percentages of the panel: the
+    // panel may grow to fit its text, and the plate must stay on the ink.
+    const p = plateFromCentre(b.rect, panel, aspect);
+    const n = (v: number) => v.toFixed(3);
     return (
-      `<i class="mt-plate" style="left:${pct(p.x)}%;top:${pct(p.y)}%;` +
-      `width:${pct(p.w)}%;height:${pct(p.h)}%;--mt-plate-alpha:${alpha.toFixed(4)}"></i>`
+      `<i class="mt-plate" style="left:calc(50% + ${n(p.dx)}cqw);top:calc(50% + ${n(p.dy)}cqw);` +
+      `width:${n(p.w)}cqw;height:${n(p.h)}cqw;--mt-plate-alpha:${alpha.toFixed(4)}"></i>`
     );
   }
 }

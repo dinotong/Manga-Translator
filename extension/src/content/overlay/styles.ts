@@ -33,6 +33,12 @@ export const OVERLAY_CSS = `
 /* The text panel: as wide as the Thai needs, as faint as the reader wants. */
 .mt-box {
   position: absolute;
+  /* left/top are the panel's centre. Positioning by centre is what lets the
+     panel grow evenly when the pixel floor in font-size outgrows it. */
+  translate: -50% -50%;
+  /* Grow taller rather than clip when the readable size needs more lines than
+     the detected bubble has room for. */
+  min-height: max-content;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -61,6 +67,13 @@ export const OVERLAY_CSS = `
    * by hit-testing pointermove in overlay.ts instead. */
   pointer-events: none;
   transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+/* A short phrase is one line, never split inside itself. Thai has no spaces, so
+   in a narrow panel overflow-wrap would break a four-letter word over four lines;
+   widening the panel about its centre reads far better. */
+.mt-box.short {
+  min-width: max-content;
 }
 
 /* The cover plate: only as big as the ink it hides, and drawn inside the panel.
