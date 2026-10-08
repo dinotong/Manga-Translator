@@ -33,13 +33,6 @@ export const MIN_READABLE_PX = 13;
 export const MIN_FONT_CQW = 1.2;
 export const MAX_FONT_CQW = 6;
 
-/**
- * At or under this many glyphs, a translation is one short line and must never
- * be broken inside itself. Thai has no spaces, so `overflow-wrap: anywhere` in a
- * narrow panel splits a four-letter word across four lines — which reads worse
- * than a panel that is a little wider than the bubble.
- */
-export const SHORT_TEXT_GLYPHS = 12;
 
 /**
  * Widest average advance of one cell, in em. Measured in Chrome on the overlay's
@@ -76,13 +69,48 @@ export function glyphCount(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, '')).length;
 }
 
+let wordSegmenter: Intl.Segmenter | null | undefined;
+
+/**
+ * Length in cells of the longest run the browser will not break a line inside.
+ *
+ * Word boundaries come from `Intl.Segmenter`, which splits Thai by dictionary
+ * the same way Chrome's line breaker does, so this agrees with where the panel
+ * will actually wrap. Punctuation stays attached to the word before it, as it
+ * does on screen. Without `Intl.Segmenter` the whole text counts as one word:
+ * the smaller size that gives is safe, a wider panel is not.
+ */
+export function longestWordGlyphs(text: string): number {
+  if (wordSegmenter === undefined) {
+    wordSegmenter =
+      typeof Intl !== 'undefined' && 'Segmenter' in Intl
+        ? new Intl.Segmenter(undefined, { granularity: 'word' })
+        : null;
+  }
+  if (!wordSegmenter) return Math.max(1, glyphCount(text));
+  let longest = 0;
+  let run = 0;
+  for (const seg of wordSegmenter.segment(text)) {
+    if (/^\s+$/u.test(seg.segment)) {
+      longest = Math.max(longest, run);
+      run = 0;
+      continue;
+    }
+    // A word starts a new run; punctuation and symbols extend the current one.
+    if (seg.isWordLike) {
+      longest = Math.max(longest, run);
+      run = 0;
+    }
+    run += glyphCount(seg.segment);
+  }
+  return Math.max(1, longest, run);
+}
+
 export interface FontFit {
   /** Area-based size in cqw, already multiplied by the reader's scale. */
   cqw: number;
   /** Readability floor in px, also scaled — a reader who asks for bigger text wants a bigger floor too. */
   minPx: number;
-  /** One short line: the panel may widen to fit it rather than wrap it. */
-  short: boolean;
 }
 
 /**
@@ -104,21 +132,25 @@ export function fitFont(panel: NormRect, aspect: number, text: string, scale: nu
   // imperfect wrapping.
   const glyphs = Math.max(1, glyphCount(text));
   const ideal = Math.sqrt((wCqw * hCqw) / (1.2 * glyphs)) * 0.92;
-  let cqw = Math.max(MIN_FONT_CQW, Math.min(MAX_FONT_CQW, ideal)) * s;
-  const short = glyphs <= SHORT_TEXT_GLYPHS;
+  const area = Math.max(MIN_FONT_CQW, Math.min(MAX_FONT_CQW, ideal)) * s;
 
-  // The area rule sizes text as if it will wrap to fill the panel, but short
-  // text is kept on one line — so at the area size a 12-cell phrase in a squat
-  // bubble came out as one line more than twice the panel's width (measured on
-  // imhentai: +279 px, across the next bubble and off the page). Cap it at the
-  // size where that one line fits the panel. Only the pixel floor may still
-  // widen it, which is the growth it exists for.
-  if (short) {
-    const oneLine = (wCqw * 0.95) / (glyphs * GLYPH_EM + PANEL_PAD_EM);
-    cqw = Math.max(MIN_FONT_CQW * s, Math.min(cqw, oneLine));
-  }
+  // Text wraps between words and never inside one (styles.ts), so the panel
+  // widens to its longest word whenever that word does not fit. The area rule
+  // knows nothing about words: at the area size a 12-cell phrase in a squat
+  // bubble measured +279 px wider than its panel on imhentai, across the next
+  // bubble and off the page. Cap the size where the longest word fits the
+  // panel. Only the pixel floor may still widen it, which is the growth it
+  // exists for.
+  //
+  // The cap is per word, not per phrase. Capping a whole short phrase to fit
+  // one line made it tiny in the narrow panels of vertical bubbles (13 px in a
+  // bubble 200 px tall, on the store sample page) when two lines broken
+  // between words would have read at twice the size.
+  const word = longestWordGlyphs(text);
+  const fits = (wCqw * 0.95) / (word * GLYPH_EM + PANEL_PAD_EM);
+  const cqw = Math.max(MIN_FONT_CQW * s, Math.min(area, fits));
 
-  return { cqw, minPx: MIN_READABLE_PX * s, short };
+  return { cqw, minPx: MIN_READABLE_PX * s };
 }
 
 /** The cover plate as an offset from the panel's centre, in cqw. */

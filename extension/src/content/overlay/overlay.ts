@@ -6,7 +6,7 @@ import { OVERLAY_CSS } from './styles';
 import { placePanels, settlePanels } from '../../core/panel-layout';
 import { fitFont, plateFromCentre } from '../../core/font-fit';
 import { joinLayoutBreaks } from '../../core/reflow';
-import { panelRect, plateAlphaOver } from '../../core/panel-shape';
+import { inkRect, panelRect, plateAlphaOver } from '../../core/panel-shape';
 
 /**
  * The overlay layer.
@@ -170,10 +170,13 @@ export class Overlay {
     // where there is room and gives width back where there is not, and never
     // uncovers the ink it is there to hide — see core/panel-layout.ts. On
     // ordinary pages it changes nothing at all.
+    // What has to stay covered is the ink, which reaches a little past the
+    // detected box — see `inkRect`.
+    const inks = result.blocks.map((b) => inkRect(b.rect, aspect));
     const panels = placePanels(
-      result.blocks.map((b) => ({
-        anchor: b.rect,
-        panel: panelRect(b.rect, b.direction, aspect),
+      result.blocks.map((b, i) => ({
+        anchor: inks[i]!,
+        panel: panelRect(inks[i]!, b.direction, aspect),
       })),
       aspect,
     ).map((p) => p.rect);
@@ -182,7 +185,7 @@ export class Overlay {
     layer.className = 'mt-layer';
     layer.dataset.hash = hash;
     layer.innerHTML = result.blocks
-      .map((b, i) => this.renderBox(b, panels[i] ?? b.rect, aspect))
+      .map((b, i) => this.renderBox(b, inks[i]!, panels[i] ?? inks[i]!, aspect))
       .join('');
 
     this.root.append(layer);
@@ -199,7 +202,7 @@ export class Overlay {
       rects: panels.slice(),
       placement: null,
       panels,
-      anchors: result.blocks.map((b) => b.rect),
+      anchors: inks,
       aspect,
       settledW: 0,
     });
@@ -316,7 +319,7 @@ export class Overlay {
    * Move each box off its neighbours now that its real size is known.
    *
    * `placePanels` placed the panels at the size `panelRect` asked for; the
-   * pixel floor, one-line short text and `min-height: max-content` can all grow
+   * pixel floor, a panel widened to its longest word and `min-height: max-content` can all grow
    * a box past that, about its centre and into the next one. See `settlePanels`.
    */
   private settle(m: Mounted): void {
@@ -439,7 +442,7 @@ export class Overlay {
    * centre so that, when the pixel floor wins over the area-based size, it grows
    * evenly in every direction instead of only to the right and down.
    */
-  private renderBox(b: OverlayBlock, panel: NormRect, aspect: number): string {
+  private renderBox(b: OverlayBlock, ink: NormRect, panel: NormRect, aspect: number): string {
     const pct = (v: number) => (v * 100).toFixed(3);
     // Also here, not only where replies are read: translations cached before
     // the reply path learned to join them still carry the model's line breaks.
@@ -452,11 +455,11 @@ export class Overlay {
       `width:${pct(panel.w)}%;height:${pct(panel.h)}%;` +
       `font-size:max(${fit.cqw.toFixed(2)}cqw,${fit.minPx.toFixed(1)}px);` +
       `--mt-panel-opacity:${this.settings.display.panelOpacity}`;
-    const cls = `mt-box${b.refused ? ' refused' : ''}${fit.short ? ' short' : ''}`;
+    const cls = `mt-box${b.refused ? ' refused' : ''}`;
 
     return (
       `<div class="${cls}" style="${style}"${hover ? ' data-hover="1"' : ''}>` +
-      this.renderPlate(b, panel, aspect) +
+      this.renderPlate(b, ink, panel, aspect) +
       `<span class="mt-text">${escapeHtml(text)}</span>` +
       (hover ? `<span class="mt-src">${escapeHtml(b.source)}</span>` : '') +
       '</div>'
@@ -473,7 +476,7 @@ export class Overlay {
    * the coincident case (horizontal text, panel not widened) from stacking two
    * elements and coming out darker than either setting asked for.
    */
-  private renderPlate(b: OverlayBlock, panel: NormRect, aspect: number): string {
+  private renderPlate(b: OverlayBlock, ink: NormRect, panel: NormRect, aspect: number): string {
     if (b.refused) return '';
     const alpha = plateAlphaOver(
       this.settings.display.plateOpacity,
@@ -483,7 +486,7 @@ export class Overlay {
 
     // Offsets from the panel centre in cqw, not percentages of the panel: the
     // panel may grow to fit its text, and the plate must stay on the ink.
-    const p = plateFromCentre(b.rect, panel, aspect);
+    const p = plateFromCentre(ink, panel, aspect);
     const n = (v: number) => v.toFixed(3);
     return (
       `<i class="mt-plate" style="left:calc(50% + ${n(p.dx)}cqw);top:calc(50% + ${n(p.dy)}cqw);` +

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   clampOpacity,
+  INK_MARGIN,
+  inkRect,
   MAX_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
   panelRect,
@@ -203,5 +205,28 @@ describe('plateInPanel', () => {
       w: 1,
       h: 1,
     });
+  });
+});
+
+describe('inkRect', () => {
+  it('grows a block by the same physical margin across and down', () => {
+    const aspect = 1.4;
+    const r = inkRect({ x: 0.5, y: 0.5, w: 0.1, h: 0.1 }, aspect);
+    expect(r.x).toBeCloseTo(0.5 - INK_MARGIN, 9);
+    expect(r.w).toBeCloseTo(0.1 + 2 * INK_MARGIN, 9);
+    // Down is measured against height, which is `aspect` times longer.
+    expect(r.y).toBeCloseTo(0.5 - INK_MARGIN / aspect, 9);
+    expect(r.h).toBeCloseTo(0.1 + (2 * INK_MARGIN) / aspect, 9);
+  });
+
+  it('stays inside the image at the edges', () => {
+    const r = inkRect({ x: 0, y: 0.995, w: 0.2, h: 0.005 }, 1.4);
+    expect(r.x).toBe(0);
+    expect(r.y + r.h).toBeLessThanOrEqual(1);
+  });
+
+  it('survives a broken aspect', () => {
+    const r = inkRect({ x: 0.4, y: 0.4, w: 0.1, h: 0.1 }, Number.NaN);
+    expect(Number.isFinite(r.y)).toBe(true);
   });
 });

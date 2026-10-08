@@ -138,3 +138,31 @@ export function plateInPanel(rect: NormRect, panel: NormRect): NormRect {
     h: rect.h / panel.h,
   };
 }
+
+/**
+ * Margin added round a detected block before anything covers it, as a fraction
+ * of image width. The detector's boxes sit tight on the probability map, which
+ * fades out before the ink does: on the store sample page the tips of the
+ * first and last glyph of a column showed above and below a plate drawn
+ * exactly on the box. One percent of width is a few pixels at any reading size
+ * — enough for a stroke end, not enough to hide art.
+ */
+export const INK_MARGIN = 0.01;
+
+/**
+ * The detected block grown by `INK_MARGIN` on every side, by the same physical
+ * length across and down, and kept inside the image.
+ *
+ * @param aspect natural.h / natural.w, to turn a width-relative margin into a
+ *               height-relative one
+ */
+export function inkRect(rect: NormRect, aspect: number): NormRect {
+  const a = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const mx = INK_MARGIN;
+  const my = INK_MARGIN / a;
+  const x0 = Math.max(0, rect.x - mx);
+  const y0 = Math.max(0, rect.y - my);
+  const x1 = Math.min(1, rect.x + rect.w + mx);
+  const y1 = Math.min(1, rect.y + rect.h + my);
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+}

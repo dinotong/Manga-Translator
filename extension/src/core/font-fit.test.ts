@@ -4,9 +4,9 @@ import {
   MAX_FONT_CQW,
   MIN_FONT_CQW,
   MIN_READABLE_PX,
-  SHORT_TEXT_GLYPHS,
   fitFont,
   glyphCount,
+  longestWordGlyphs,
   plateFromCentre,
 } from './font-fit';
 
@@ -46,9 +46,10 @@ describe('fitFont', () => {
   });
 
   it('gives Thai with marks the same size as the same number of bare cells', () => {
-    const box = { x: 0, y: 0, w: 0.08, h: 0.05 };
-    const marked = fitFont(box, 1.4, 'ที่นี่', 1).cqw; // 2 cells, 6 code units
-    const bare = fitFont(box, 1.4, 'ทน', 1).cqw; // 2 cells
+    // Wide enough that no word is near the panel width, so only area decides.
+    const box = { x: 0, y: 0, w: 0.3, h: 0.03 };
+    const marked = fitFont(box, 1.4, 'ที่นี่ ที่นี่', 1).cqw; // 4 cells
+    const bare = fitFont(box, 1.4, 'ทน ทน', 1).cqw; // 4 cells
     expect(marked).toBeCloseTo(bare, 6);
   });
 
@@ -58,45 +59,44 @@ describe('fitFont', () => {
   });
 
   it('scales the cqw size by the reader setting', () => {
-    // Long enough to wrap: a short phrase is also held to its one-line width.
-    const box = { x: 0, y: 0, w: 0.08, h: 0.05 };
-    const text = 'ก'.repeat(SHORT_TEXT_GLYPHS + 4);
+    const box = { x: 0, y: 0, w: 0.3, h: 0.05 };
+    const text = 'go go go go go go go go';
     const one = fitFont(box, 1.4, text, 1).cqw;
     expect(fitFont(box, 1.4, text, 2).cqw).toBeCloseTo(one * 2, 6);
   });
 
-  it('marks short text so the panel widens instead of wrapping it', () => {
-    expect(fitFont(big, 1.4, 'ก'.repeat(SHORT_TEXT_GLYPHS), 1).short).toBe(true);
-    expect(fitFont(big, 1.4, 'ก'.repeat(SHORT_TEXT_GLYPHS + 1), 1).short).toBe(false);
-  });
-
-  it('sizes short text so its one line fits the panel width', () => {
-    // The imhentai page that overlapped: 12 cells in a 26.6% x 24.4% panel got
-    // the 6cqw ceiling x1.2 and came out as one line 2.2x the panel's width.
+  it('sizes text so its longest word fits the panel width', () => {
+    // The imhentai page that overlapped: 12 cells with no break in a 26.6% x
+    // 24.4% panel got the 6cqw ceiling x1.2, 2.2x the panel's width.
     const panel = { x: 0.63, y: 0.14, w: 0.26558, h: 0.2441 };
-    const f = fitFont(panel, 1.407, 'ก'.repeat(12), 1.2);
-    expect(f.short).toBe(true);
-    const lineCqw = f.cqw * (12 * GLYPH_EM + 0.6);
-    expect(lineCqw).toBeLessThanOrEqual(panel.w * 100);
+    const text = 'x'.repeat(12);
+    const f = fitFont(panel, 1.407, text, 1.2);
+    expect(f.cqw * (12 * GLYPH_EM + 0.6)).toBeLessThanOrEqual(panel.w * 100);
   });
 
-  it('leaves long text on the area rule', () => {
-    const panel = { x: 0, y: 0, w: 0.1, h: 0.3 };
-    const text = 'ก'.repeat(SHORT_TEXT_GLYPHS + 8);
-    const ideal = Math.sqrt((10 * 30 * 1.4) / (1.2 * (SHORT_TEXT_GLYPHS + 8))) * 0.92;
-    expect(fitFont(panel, 1.4, text, 1).cqw).toBeCloseTo(Math.min(MAX_FONT_CQW, ideal), 6);
+  it('lets a short phrase wrap between words instead of shrinking to one line', () => {
+    // A narrow vertical-bubble panel: one line of all five words would need a
+    // tiny size, two-cell words do not.
+    const narrow = { x: 0, y: 0, w: 0.14, h: 0.25 };
+    const text = 'ab cd ef gh ij';
+    const oneLine = (14 * 0.95) / (14 * GLYPH_EM + 0.6);
+    expect(fitFont(narrow, 1.4, text, 1).cqw).toBeGreaterThan(oneLine * 2);
   });
 
-  it('does not push a short phrase below the cqw floor in a sliver of a panel', () => {
+  it('keeps punctuation with the word it follows', () => {
+    expect(longestWordGlyphs('wait!!!')).toBe(7);
+    expect(longestWordGlyphs('go now')).toBe(3);
+  });
+
+  it('finds Thai word boundaries without spaces', () => {
+    // ไป | ผจญภัย | ด้วยกัน | เถอะ — the longest is far shorter than the phrase.
+    const phrase = 'ไปผจญภัยด้วยกันเถอะ';
+    expect(longestWordGlyphs(phrase)).toBeLessThan(glyphCount(phrase));
+  });
+
+  it('does not push a phrase below the cqw floor in a sliver of a panel', () => {
     const sliver = { x: 0, y: 0, w: 0.01, h: 0.2 };
     expect(fitFont(sliver, 1.4, 'อะไรกัน', 1.5).cqw).toBeCloseTo(MIN_FONT_CQW * 1.5, 6);
-  });
-
-  it('judges short by cells, so marks do not push a phrase into long', () => {
-    // 12 cells, 18 code units
-    const s = 'ที่'.repeat(6) + 'ก'.repeat(6);
-    expect(s.length).toBeGreaterThan(SHORT_TEXT_GLYPHS);
-    expect(fitFont(big, 1.4, s, 1).short).toBe(true);
   });
 
   it('survives broken inputs', () => {

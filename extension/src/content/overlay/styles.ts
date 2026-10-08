@@ -51,10 +51,14 @@ export const OVERLAY_CSS = `
   font-family: "Sarabun", "Noto Sans Thai", "Leelawadee UI", system-ui, sans-serif;
   line-height: 1.18;
   text-align: center;
-  /* Thai has no inter-word spaces, so the default breaking rules give one very
-     long line. */
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  /* Wrap between words, never inside one. Chrome finds Thai word boundaries by
+     dictionary under word-break: normal, so a phrase with no spaces still wraps
+     at a word. overflow-wrap: anywhere used to let it split "ไดโนเสาร์" in a
+     narrow panel; min-width keeps the panel at least as wide as its longest
+     word instead, and core/font-fit.ts sizes text so that word fits. */
+  word-break: normal;
+  overflow-wrap: break-word;
+  min-width: min-content;
   text-wrap: balance;
   /* Never auto, at any nesting depth.
    *
@@ -69,12 +73,6 @@ export const OVERLAY_CSS = `
   transition: background-color 140ms ease, border-color 140ms ease;
 }
 
-/* A short phrase is one line, never split inside itself. Thai has no spaces, so
-   in a narrow panel overflow-wrap would break a four-letter word over four lines;
-   widening the panel about its centre reads far better. */
-.mt-box.short {
-  min-width: max-content;
-}
 
 /* The cover plate: only as big as the ink it hides, and drawn inside the panel.
    Its alpha is not the reader's plate setting directly — it is what that setting
