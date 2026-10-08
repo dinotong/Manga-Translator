@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GLYPH_EM,
   MAX_FONT_CQW,
   MIN_FONT_CQW,
   MIN_READABLE_PX,
@@ -57,14 +58,38 @@ describe('fitFont', () => {
   });
 
   it('scales the cqw size by the reader setting', () => {
+    // Long enough to wrap: a short phrase is also held to its one-line width.
     const box = { x: 0, y: 0, w: 0.08, h: 0.05 };
-    const one = fitFont(box, 1.4, 'อะไรกัน', 1).cqw;
-    expect(fitFont(box, 1.4, 'อะไรกัน', 2).cqw).toBeCloseTo(one * 2, 6);
+    const text = 'ก'.repeat(SHORT_TEXT_GLYPHS + 4);
+    const one = fitFont(box, 1.4, text, 1).cqw;
+    expect(fitFont(box, 1.4, text, 2).cqw).toBeCloseTo(one * 2, 6);
   });
 
   it('marks short text so the panel widens instead of wrapping it', () => {
     expect(fitFont(big, 1.4, 'ก'.repeat(SHORT_TEXT_GLYPHS), 1).short).toBe(true);
     expect(fitFont(big, 1.4, 'ก'.repeat(SHORT_TEXT_GLYPHS + 1), 1).short).toBe(false);
+  });
+
+  it('sizes short text so its one line fits the panel width', () => {
+    // The imhentai page that overlapped: 12 cells in a 26.6% x 24.4% panel got
+    // the 6cqw ceiling x1.2 and came out as one line 2.2x the panel's width.
+    const panel = { x: 0.63, y: 0.14, w: 0.26558, h: 0.2441 };
+    const f = fitFont(panel, 1.407, 'ก'.repeat(12), 1.2);
+    expect(f.short).toBe(true);
+    const lineCqw = f.cqw * (12 * GLYPH_EM + 0.6);
+    expect(lineCqw).toBeLessThanOrEqual(panel.w * 100);
+  });
+
+  it('leaves long text on the area rule', () => {
+    const panel = { x: 0, y: 0, w: 0.1, h: 0.3 };
+    const text = 'ก'.repeat(SHORT_TEXT_GLYPHS + 8);
+    const ideal = Math.sqrt((10 * 30 * 1.4) / (1.2 * (SHORT_TEXT_GLYPHS + 8))) * 0.92;
+    expect(fitFont(panel, 1.4, text, 1).cqw).toBeCloseTo(Math.min(MAX_FONT_CQW, ideal), 6);
+  });
+
+  it('does not push a short phrase below the cqw floor in a sliver of a panel', () => {
+    const sliver = { x: 0, y: 0, w: 0.01, h: 0.2 };
+    expect(fitFont(sliver, 1.4, 'อะไรกัน', 1.5).cqw).toBeCloseTo(MIN_FONT_CQW * 1.5, 6);
   });
 
   it('judges short by cells, so marks do not push a phrase into long', () => {

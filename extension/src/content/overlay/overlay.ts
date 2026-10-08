@@ -3,7 +3,7 @@ import type { OverlayBlock } from '../../shared/messages';
 import type { Settings } from '../../shared/settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
-import { placePanels } from '../../core/panel-layout';
+import { placePanels, settlePanels } from '../../core/panel-layout';
 import { fitFont, plateFromCentre } from '../../core/font-fit';
 import { panelRect, plateAlphaOver } from '../../core/panel-shape';
 
@@ -40,6 +40,13 @@ interface Mounted {
   /** Their normalized rects, so hover hit-testing needs no DOM reads at all. */
   rects: NormRect[];
   placement: Placement | null;
+  /** What `placePanels` chose, before the browser laid any text out. */
+  panels: NormRect[];
+  /** The detected blocks, which each panel must keep covering. */
+  anchors: NormRect[];
+  aspect: number;
+  /** Layer width the boxes were last measured at; 0 until the first time. */
+  settledW: number;
 }
 
 export class Overlay {
@@ -188,8 +195,12 @@ export class Overlay {
       // hover region was still the narrow column meant pointing at the part of
       // the box that covers the art — the part they want out of the way — did
       // nothing.
-      rects: panels,
+      rects: panels.slice(),
       placement: null,
+      panels,
+      anchors: result.blocks.map((b) => b.rect),
+      aspect,
+      settledW: 0,
     });
     this.track(target);
     this.dirty = true;
@@ -278,6 +289,10 @@ export class Overlay {
           continue;
         }
         m.placement = place(m.layer, target);
+        // The pixel floor makes rendered size depend on rendered width, so the
+        // boxes are measured again whenever the layer changes width — and only
+        // then, since measuring forces a layout.
+        if (m.placement.w > 0 && Math.abs(m.placement.w - m.settledW) > 0.5) this.settle(m);
       }
       for (const [target, el] of this.statuses) {
         if (!target.isConnected) {
@@ -295,6 +310,45 @@ export class Overlay {
     }
     requestAnimationFrame(this.tick);
   };
+
+  /**
+   * Move each box off its neighbours now that its real size is known.
+   *
+   * `placePanels` placed the panels at the size `panelRect` asked for; the
+   * pixel floor, one-line short text and `min-height: max-content` can all grow
+   * a box past that, about its centre and into the next one. See `settlePanels`.
+   */
+  private settle(m: Mounted): void {
+    const p = m.placement;
+    if (!p || p.w <= 0 || p.h <= 0) return;
+    m.settledW = p.w;
+    const sizes = m.boxes.map((b) => ({ w: b.offsetWidth / p.w, h: b.offsetHeight / p.h }));
+    const centres = settlePanels(
+      m.panels.map((panel, i) => ({ panel, anchor: m.anchors[i] ?? panel, size: sizes[i]! })),
+      m.aspect,
+    );
+    const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
+    centres.forEach((c, i) => {
+      const box = m.boxes[i];
+      const panel = m.panels[i];
+      if (!box || !panel) return;
+      box.style.left = pct(c.cx);
+      box.style.top = pct(c.cy);
+      // The plate hangs off the box's centre, so a box that moved would carry
+      // it off the ink. Re-measure it from the new centre.
+      const plate = box.querySelector<HTMLElement>('.mt-plate');
+      const anchor = m.anchors[i];
+      if (plate && anchor) {
+        const moved = { ...panel, x: c.cx - panel.w / 2, y: c.cy - panel.h / 2 };
+        const off = plateFromCentre(anchor, moved, m.aspect);
+        plate.style.left = `calc(50% + ${off.dx.toFixed(3)}cqw)`;
+        plate.style.top = `calc(50% + ${off.dy.toFixed(3)}cqw)`;
+      }
+      const w = Math.max(panel.w, sizes[i]!.w);
+      const h = Math.max(panel.h, sizes[i]!.h);
+      m.rects[i] = { x: c.cx - w / 2, y: c.cy - h / 2, w, h };
+    });
+  }
 
   /* ---------------- hover, without taking the pointer ---------------- */
 

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { panelRect } from './panel-shape';
-import { placePanels, type PanelPlacement, type PlacedPanel } from './panel-layout';
+import {
+  placePanels,
+  settlePanels,
+  type PanelPlacement,
+  type PlacedPanel,
+  type RenderedPanel,
+} from './panel-layout';
 import type { NormRect } from '../types';
 
 /** MangaDex's real page shape, 3496x4960. */
@@ -223,5 +229,71 @@ describe('placePanels', () => {
       { anchor: b, panel: panelRect(b, 'horizontal', ASPECT) },
     ];
     expect(placePanels(items, ASPECT).map((p) => p.rect)).toEqual([a, b]);
+  });
+});
+
+describe('settlePanels', () => {
+  /** The rendered rect around a settled centre. */
+  const at = (c: { cx: number; cy: number }, s: { w: number; h: number }): NormRect => ({
+    x: c.cx - s.w / 2,
+    y: c.cy - s.h / 2,
+    w: s.w,
+    h: s.h,
+  });
+  const centred = (cx: number, cy: number, w: number, h: number): NormRect => ({
+    x: cx - w / 2,
+    y: cy - h / 2,
+    w,
+    h,
+  });
+
+  it('leaves panels that rendered at the size they asked for where they are', () => {
+    const a = centred(0.3, 0.2, 0.2, 0.05);
+    const b = centred(0.7, 0.6, 0.2, 0.05);
+    const out = settlePanels(
+      [a, b].map((p) => ({ panel: p, anchor: p, size: { w: p.w, h: p.h } })),
+      ASPECT,
+    );
+    expect(out[0]!.cx).toBeCloseTo(0.3, 9);
+    expect(out[0]!.cy).toBeCloseTo(0.2, 9);
+    expect(out[1]!.cx).toBeCloseTo(0.7, 9);
+    expect(out[1]!.cy).toBeCloseTo(0.6, 9);
+  });
+
+  it('pulls apart two panels the pixel floor grew into each other', () => {
+    // Measured on MangaDex at 635x889 px: the lower panel was detected one
+    // line tall, rendered two, and grew 7 px into the one above it.
+    const L = { w: 635, h: 889 };
+    const items: RenderedPanel[] = [
+      { panel: centred(0.75, 0.53802, 0.33934, 0.05125), size: { w: 215 / L.w, h: 61 / L.h } },
+      { panel: centred(0.73214, 0.58854, 0.29342, 0.0075), size: { w: 186 / L.w, h: 43 / L.h } },
+    ].map((i) => ({ ...i, anchor: i.panel }));
+    const aspect = L.h / L.w;
+
+    const before = items.map((i) => at({ cx: i.panel.x + i.panel.w / 2, cy: i.panel.y + i.panel.h / 2 }, i.size));
+    expect(overlap(before[0]!, before[1]!)).toBeGreaterThan(0);
+
+    // A panel never renders narrower than it was set, whatever was measured.
+    const grown = items.map((i) => ({ w: Math.max(i.panel.w, i.size.w), h: Math.max(i.panel.h, i.size.h) }));
+    const after = settlePanels(items, aspect).map((c, i) => at(c, grown[i]!));
+    expect(overlap(after[0]!, after[1]!)).toBe(0);
+    after.forEach((r, i) => expect(covers(r, items[i]!.anchor)).toBe(true));
+  });
+
+  it('brings a panel that grew past the edge of the image back inside', () => {
+    const p = centred(0.9, 0.5, 0.1, 0.05);
+    const [c] = settlePanels([{ panel: p, anchor: p, size: { w: 0.3, h: 0.05 } }], ASPECT);
+    expect(c!.cx + 0.15).toBeLessThanOrEqual(1 + 1e-9);
+    expect(covers(at(c!, { w: 0.3, h: 0.05 }), p)).toBe(true);
+  });
+
+  it('ignores a size that is broken or smaller than the panel', () => {
+    const p = centred(0.5, 0.5, 0.2, 0.1);
+    const [c] = settlePanels(
+      [{ panel: p, anchor: p, size: { w: Number.NaN, h: 0.01 } }],
+      ASPECT,
+    );
+    expect(c!.cx).toBeCloseTo(0.5, 9);
+    expect(c!.cy).toBeCloseTo(0.5, 9);
   });
 });

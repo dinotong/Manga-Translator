@@ -41,6 +41,16 @@ export const MAX_FONT_CQW = 6;
  */
 export const SHORT_TEXT_GLYPHS = 12;
 
+/**
+ * Widest average advance of one cell, in em. Measured in Chrome on the overlay's
+ * font stack over Thai and Latin phrases: 0.40–0.61. The top of that range, so a
+ * line sized with it fits rather than nearly fits.
+ */
+export const GLYPH_EM = 0.62;
+
+/** `.mt-box` horizontal padding, both sides, in em (styles.ts: `0.3em`). */
+const PANEL_PAD_EM = 0.6;
+
 let segmenter: Intl.Segmenter | null | undefined;
 
 /**
@@ -94,9 +104,21 @@ export function fitFont(panel: NormRect, aspect: number, text: string, scale: nu
   // imperfect wrapping.
   const glyphs = Math.max(1, glyphCount(text));
   const ideal = Math.sqrt((wCqw * hCqw) / (1.2 * glyphs)) * 0.92;
-  const cqw = Math.max(MIN_FONT_CQW, Math.min(MAX_FONT_CQW, ideal)) * s;
+  let cqw = Math.max(MIN_FONT_CQW, Math.min(MAX_FONT_CQW, ideal)) * s;
+  const short = glyphs <= SHORT_TEXT_GLYPHS;
 
-  return { cqw, minPx: MIN_READABLE_PX * s, short: glyphs <= SHORT_TEXT_GLYPHS };
+  // The area rule sizes text as if it will wrap to fill the panel, but short
+  // text is kept on one line — so at the area size a 12-cell phrase in a squat
+  // bubble came out as one line more than twice the panel's width (measured on
+  // imhentai: +279 px, across the next bubble and off the page). Cap it at the
+  // size where that one line fits the panel. Only the pixel floor may still
+  // widen it, which is the growth it exists for.
+  if (short) {
+    const oneLine = (wCqw * 0.95) / (glyphs * GLYPH_EM + PANEL_PAD_EM);
+    cqw = Math.max(MIN_FONT_CQW * s, Math.min(cqw, oneLine));
+  }
+
+  return { cqw, minPx: MIN_READABLE_PX * s, short };
 }
 
 /** The cover plate as an offset from the panel's centre, in cqw. */

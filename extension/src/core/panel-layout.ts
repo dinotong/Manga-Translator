@@ -255,3 +255,57 @@ function toSquare(r: NormRect, aspect: number): Rect {
 function fromSquare(r: Rect, aspect: number): NormRect {
   return { x: r.x, y: r.y / aspect, w: r.w, h: r.h / aspect };
 }
+
+/** A placed panel and the size it actually rendered at, normalized against the image. */
+export interface RenderedPanel {
+  /** Where `placePanels` put it, before the browser laid the text out. */
+  panel: NormRect;
+  anchor: NormRect;
+  /** Its laid-out size. Never smaller than `panel` — CSS only lets it grow. */
+  size: { w: number; h: number };
+}
+
+/**
+ * Where to centre each panel once the browser has said how big it really is.
+ *
+ * `placePanels` works from the sizes `panelRect` asked for, but CSS may grow a
+ * panel past that: the pixel floor on font size, a short phrase kept on one
+ * line, and `min-height: max-content` for text that needs more lines than the
+ * bubble had. Growth is about the centre, so two panels placed edge to edge
+ * grow into each other — measured on MangaDex at 625 px wide, a two-line panel
+ * whose detected height was one line ran 7 px into the panel above it.
+ *
+ * Only the centre is returned. The rendered size is the text's own, so it
+ * cannot be trimmed back the way `placePanels` trims; a slide is the only move
+ * that helps, and where a trim was chosen the centre still moves the panel off
+ * the worst of the collision while it keeps covering its ink.
+ */
+export function settlePanels(
+  items: readonly RenderedPanel[],
+  aspect: number,
+): { cx: number; cy: number }[] {
+  const grown = items.map((it) => {
+    const cx = it.panel.x + it.panel.w / 2;
+    const cy = it.panel.y + it.panel.h / 2;
+    const w = Math.max(it.panel.w, finiteOr(it.size.w, 0));
+    const h = Math.max(it.panel.h, finiteOr(it.size.h, 0));
+    // Grown past an edge of the image, a panel has nowhere legal to slide —
+    // every slide is checked against the image bounds — so pull it back in
+    // first. Panels larger than the image itself are left centred.
+    const x = clamp(cx - w / 2, 0, 1 - w);
+    const y = clamp(cy - h / 2, 0, 1 - h);
+    return { anchor: it.anchor, panel: { x, y, w, h } };
+  });
+  return placePanels(grown, aspect).map(({ rect }) => ({
+    cx: rect.x + rect.w / 2,
+    cy: rect.y + rect.h / 2,
+  }));
+}
+
+function finiteOr(v: number, fallback: number): number {
+  return Number.isFinite(v) ? v : fallback;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return hi < lo ? v : Math.min(hi, Math.max(lo, v));
+}
