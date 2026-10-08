@@ -13,6 +13,10 @@
 - ✅ ปลดป้าย ยังไม่ออก ใน CHANGELOG แล้ว
 - ✅ รีโปเป็น public แล้ว (2026-10-08) · ลิงก์ Issues อยู่ใน docs/privacy.md · **รายการข้อ 1 ครบ**
 - ✅ **เบต้า A เริ่มแล้ว 2026-10-09**: [Release v1.0.0](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.0) ติด Pre-release · zip 10,843,430 bytes (build หลัง `3df42ee` · grep `AIza` ไม่เจอ) · ปลดป้าย Pre-release เมื่อจบเบต้า 2 สัปดาห์ → ต่อ Web Store + Edge
+- 🆕 **เจอ 2026-10-09 ตอนถ่ายภาพหน้าร้าน (ยังไม่แก้):**
+  - คำขอ Gemini **ไม่มี timeout** (`GeminiProvider.call`) — วัดได้: ส่ง 17:19:53 ได้ 503 `PROVIDER_BUSY` กลับมาเกือบ 5 นาทีหลัง ระหว่างนั้นป้ายขึ้น "กำลังแปล" ค้าง ผู้อ่านไม่รู้ว่าควรรอหรือกดใหม่
+  - ป้ายสถานะ error ถูกบีบเป็นคอลัมน์กว้าง ~60 px บนรูปที่ย่อ (reader 1280×800 ภาพสูง 800) — ข้อความยาวอ่านยาก
+  - ✅ แก้แล้ว: ข้อความ error บอกให้ "ดู console" แต่ไม่เคย log อะไรลง console — ตอนนี้ log `[mt:content] CODE: message` แล้ว
 - วิธีวัดกล่องใน closed shadow root: `take_snapshot` ให้ uid ของข้อความใน overlay → ส่ง uid เข้า `evaluate_script` → `getRootNode()` ได้ shadow root
 - เครื่องมือ: `.mcp.json` มี chrome-devtools-mcp (extensions + autoConnect) · ต้องติ๊ก remote debugging ที่ chrome://inspect/#remote-debugging ทุกครั้งที่เปิด Chrome
 - Safari/iOS วิจัยแล้ว ยังไม่ทำ: [05-safari-ios-research.md](05-safari-ios-research.md)

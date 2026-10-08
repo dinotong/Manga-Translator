@@ -396,6 +396,9 @@ export default defineContentScript({
         redo.delete(img);
       } catch (err) {
         const payload = toErrorPayload(err);
+        // The hint on screen tells the reader to look here, so the detail
+        // behind it has to actually be here.
+        console.warn(`[mt:content] ${payload.code}: ${payload.message}`);
         overlay.status(img, payload.hint || payload.message, 'error');
         settle(job);
         return; // must not await a reply that will never come — it would stall the queue
@@ -931,6 +934,7 @@ export default defineContentScript({
       }
 
       if (job.imgs.size > 0) {
+        console.warn(`[mt:content] ${msg.code}: ${msg.message}`);
         for (const img of job.imgs) overlay.status(img, msg.hint || msg.message, 'error');
       } else {
         // A prefetch that failed is not the reader's problem: they never asked

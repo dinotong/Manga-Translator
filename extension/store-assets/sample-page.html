@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- Original sample manga page for store screenshots. Characters, art and
+     dialogue are made for this project; no third-party artwork. Apache-2.0. -->
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; }
+  .page { position: relative; width: 1000px; height: 1414px; background: #fff; overflow: hidden; }
+  .panel { position: absolute; border: 6px solid #111; background: #fff; overflow: hidden; box-sizing: border-box; }
+  .bubble { position: absolute; background: #fff; border: 4px solid #111; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .bubble.shout { border-radius: 18px; border-width: 5px; }
+  .v { writing-mode: vertical-rl; font-family: "Yu Gothic", "YuGothic", "Meiryo", "MS Gothic", sans-serif;
+    font-weight: 700; color: #111; line-height: 1.25; letter-spacing: 0.04em; }
+  .tail { position: absolute; width: 0; height: 0; }
+  .sfx { position: absolute; font-family: "Yu Gothic", "Meiryo", sans-serif; font-weight: 900; color: #111;
+    -webkit-text-stroke: 3px #111; transform: rotate(-12deg); }
+  svg { position: absolute; }
+</style>
+<div class="page">
+  <!-- Panel 1: kid waking up, morning sun -->
+  <div class="panel" style="left:30px;top:30px;width:940px;height:430px">
+    <svg width="940" height="430" viewBox="0 0 940 430">
+      <circle cx="150" cy="110" r="60" fill="none" stroke="#111" stroke-width="5"/>
+      <g stroke="#111" stroke-width="5">
+        <line x1="150" y1="25" x2="150" y2="5"/><line x1="235" y1="110" x2="260" y2="110"/>
+        <line x1="210" y1="50" x2="228" y2="32"/><line x1="90" y1="50" x2="72" y2="32"/>
+      </g>
+      <!-- the kid: round face, big cowlick, striped shirt -->
+      <g transform="translate(560 110)">
+        <path d="M-10 -95 q30 -60 70 -30 q-35 0 -40 30z" fill="#111"/>
+        <circle cx="0" cy="40" r="110" fill="#fff" stroke="#111" stroke-width="6"/>
+        <path d="M-108 20 q20 -120 140 -110 q70 10 76 90 q-60 -60 -120 -30 q-50 20 -96 50z" fill="#111"/>
+        <ellipse cx="-38" cy="55" rx="12" ry="18" fill="#111"/>
+        <ellipse cx="38" cy="55" rx="12" ry="18" fill="#111"/>
+        <path d="M-25 105 q25 25 50 0" fill="none" stroke="#111" stroke-width="6" stroke-linecap="round"/>
+        <path d="M-120 330 q0 -150 120 -150 q120 0 120 150z" fill="#fff" stroke="#111" stroke-width="6"/>
+        <path d="M-112 260 h224 M-118 300 h236" stroke="#111" stroke-width="10"/>
+      </g>
+    </svg>
+    <div class="bubble" style="left:740px;top:40px;width:160px;height:260px">
+      <span class="v" style="font-size:40px">おはよう！</span>
+    </div>
+    <div class="bubble" style="left:300px;top:220px;width:150px;height:190px">
+      <span class="v" style="font-size:30px">いい天気<br>だなあ</span>
+    </div>
+  </div>
+
+  <!-- Panel 2: a small dinosaur pops out of the bushes -->
+  <div class="panel" style="left:30px;top:480px;width:460px;height:470px">
+    <svg width="460" height="470" viewBox="0 0 460 470">
+      <path d="M0 400 q40 -60 90 -20 q30 -70 90 -20 q40 -60 100 -10 q40 -50 100 0 q40 -30 80 10 v110 h-460z" fill="#fff" stroke="#111" stroke-width="5"/>
+      <g transform="translate(250 270)">
+        <path d="M-40 130 q-40 -160 60 -200 q90 -30 120 40 q20 60 -40 70 q-20 2 -30 -10" fill="#fff" stroke="#111" stroke-width="6"/>
+        <path d="M0 -60 l12 -26 l14 22 l14 -30 l14 26 l14 -22 l8 28" fill="#fff" stroke="#111" stroke-width="5" stroke-linejoin="round"/>
+        <circle cx="90" cy="-30" r="10" fill="#111"/>
+        <path d="M110 10 q20 6 30 -4" fill="none" stroke="#111" stroke-width="5"/>
+        <path d="M70 18 l8 14 l8 -12" fill="none" stroke="#111" stroke-width="4"/>
+      </g>
+    </svg>
+    <div class="sfx" style="left:40px;top:60px;font-size:84px">ガオー</div>
+  </div>
+
+  <!-- Panel 3: the kid, surprised -->
+  <div class="panel" style="left:510px;top:480px;width:460px;height:470px">
+    <svg width="460" height="470" viewBox="0 0 460 470">
+      <g transform="translate(170 280)">
+        <path d="M-10 -95 q30 -60 70 -30 q-35 0 -40 30z" fill="#111"/>
+        <circle cx="0" cy="40" r="110" fill="#fff" stroke="#111" stroke-width="6"/>
+        <path d="M-108 20 q20 -120 140 -110 q70 10 76 90 q-60 -60 -120 -30 q-50 20 -96 50z" fill="#111"/>
+        <circle cx="-38" cy="55" r="16" fill="#fff" stroke="#111" stroke-width="5"/>
+        <circle cx="38" cy="55" r="16" fill="#fff" stroke="#111" stroke-width="5"/>
+        <circle cx="-38" cy="55" r="4" fill="#111"/><circle cx="38" cy="55" r="4" fill="#111"/>
+        <ellipse cx="0" cy="110" rx="16" ry="20" fill="#111"/>
+        <path d="M120 -40 l26 -20 M126 0 l32 -4 M120 40 l26 16" stroke="#111" stroke-width="5"/>
+      </g>
+    </svg>
+    <div class="bubble shout" style="left:330px;top:30px;width:110px;height:250px">
+      <span class="v" style="font-size:38px">えっ<br>恐竜！？</span>
+    </div>
+  </div>
+
+  <!-- Panel 4: both of them, setting off -->
+  <div class="panel" style="left:30px;top:970px;width:940px;height:414px">
+    <svg width="940" height="414" viewBox="0 0 940 414">
+      <path d="M0 330 q470 -60 940 0" fill="none" stroke="#111" stroke-width="5"/>
+      <path d="M600 330 q30 -180 120 -230 q60 -30 110 10" fill="none" stroke="#111" stroke-width="4" stroke-dasharray="14 10"/>
+      <g transform="translate(330 250) scale(0.7)">
+        <circle cx="0" cy="40" r="110" fill="#fff" stroke="#111" stroke-width="7"/>
+        <path d="M-108 20 q20 -120 140 -110 q70 10 76 90 q-60 -60 -120 -30 q-50 20 -96 50z" fill="#111"/>
+        <path d="M-50 60 q12 -14 24 0 M26 60 q12 -14 24 0" fill="none" stroke="#111" stroke-width="7" stroke-linecap="round"/>
+        <path d="M-35 95 q35 40 70 0z" fill="#111"/>
+      </g>
+      <g transform="translate(520 250) scale(0.6)">
+        <path d="M-40 130 q-40 -160 60 -200 q90 -30 120 40 q20 60 -40 70 q-20 2 -30 -10" fill="#fff" stroke="#111" stroke-width="8"/>
+        <path d="M80 -34 q10 -12 20 0" fill="none" stroke="#111" stroke-width="7"/>
+      </g>
+    </svg>
+    <div class="bubble" style="left:60px;top:30px;width:190px;height:330px">
+      <span class="v" style="font-size:36px">一緒に<br>冒険しよう！</span>
+    </div>
+    <div class="bubble" style="left:720px;top:40px;width:150px;height:220px">
+      <span class="v" style="font-size:36px">ガウ！</span>
+    </div>
+  </div>
+</div>
