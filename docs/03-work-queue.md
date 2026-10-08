@@ -3,7 +3,19 @@
 > อัปเดต 2026-08-16 · **ทำจากบนลงล่าง** · ติ๊ก `[x]` เมื่อเสร็จ
 > เป้าหมายที่เจ้าของโปรเจกต์ยืนยัน: **เอา extension ไปอ่านมังงะได้จริง**
 
-## สถานะ 2026-08-16 — อ่านตรงนี้ก่อน
+## สถานะ 2026-10-08 — อ่านตรงนี้ก่อน
+
+**กำลังเตรียมเปิดให้คนอื่นโหลดใช้** — แผนเต็ม + สถานะทีละข้อ: [04-public-release-plan.md](04-public-release-plan.md)
+
+- v1.0.0 · extension 569/569 · tsc สะอาด · zip 10.8 MB · Chrome ใช้ Developer mode ได้แล้ว (D-021 หมดอายุ)
+- ✅ พิสูจน์บน Chrome แล้ว: Diagnostics 6/6 เขียว (โมเดลมากับแพ็กเกจ · WebGPU · gemini-flash-lite-latest ตอบ) · ตัวอักษรสั้นอ่านออก
+- ⏳ **ค้างข้อ 1.3:** กล่องคำแปลที่ขยายตามขนาดขั้นต่ำ 13px ทับกล่องข้างๆ ไหม (placePanels คิดจากขนาดก่อนขยาย) · MangaDex/imhentai ไม่พัง
+- หลัง 1.3 ผ่าน: ปลดป้าย ยังไม่ออก ใน extension/CHANGELOG.md → เปิดรีโป public → ใส่ลิงก์ Issues ใน docs/privacy.md
+- เครื่องมือ: `.mcp.json` มี chrome-devtools-mcp (extensions + autoConnect) · ต้องติ๊ก remote debugging ที่ chrome://inspect/#remote-debugging ทุกครั้งที่เปิด Chrome
+- Safari/iOS วิจัยแล้ว ยังไม่ทำ: [05-safari-ios-research.md](05-safari-ios-research.md)
+- ข้อค้างเดิม (คุณภาพคำแปล · งานที่ทิ้ง · afterword · 10→9 กล่อง) ยังอยู่ในบล็อก 2026-08-16 ข้างล่าง
+
+## สถานะ 2026-08-16
 
 **แจกให้เพื่อนได้แล้ว** — `npm run zip` ใน `extension/` · คู่มือที่ [install-for-friends.md](install-for-friends.md) · ตรวจแล้วว่าไม่มี API key ติดในแพ็กเกจ
 
