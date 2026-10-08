@@ -12,6 +12,7 @@
 - ✅ **ข้อ 1.3 ผ่าน** (`3df42ee`): เจอกล่องขยายทับจริงทั้ง 2 เว็บ → แก้ (เพดานข้อความสั้น + `settlePanels` วัดขนาดจริงแล้วเลื่อนหลบ) → วัดซ้ำทับ 0 คู่ · ตัวเลขเต็มใน 04 · extension 576/576
 - ✅ ปลดป้าย ยังไม่ออก ใน CHANGELOG แล้ว
 - ✅ รีโปเป็น public แล้ว (2026-10-08) · ลิงก์ Issues อยู่ใน docs/privacy.md · **รายการข้อ 1 ครบ**
+- ✅ **[Release v1.0.1](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.1) ขึ้นแล้ว 2026-10-09** (Pre-release · zip 10,844,223 bytes · `a87b34b`) — รุ่นเดียวกับที่จะส่ง Chrome Web Store · เบต้าที่ถือ 1.0.0 ต้องโหลดใหม่เอง
 - ✅ **เบต้า A เริ่มแล้ว 2026-10-09**: [Release v1.0.0](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.0) ติด Pre-release · zip 10,843,430 bytes (build หลัง `3df42ee` · grep `AIza` ไม่เจอ) · ปลดป้าย Pre-release เมื่อจบเบต้า 2 สัปดาห์ → ต่อ Web Store + Edge
 - 🆕 **เจอ 2026-10-09 ตอนถ่ายภาพหน้าร้าน (ยังไม่แก้):**
   - ✅ แก้แล้ว (1.0.1): timeout 90 วิ (`core/deadline.ts`) → `PROVIDER_BUSY` บอกให้ลองใหม่ · เดิม: คำขอ Gemini **ไม่มี timeout** (`GeminiProvider.call`) — วัดได้: ส่ง 17:19:53 ได้ 503 `PROVIDER_BUSY` กลับมาเกือบ 5 นาทีหลัง ระหว่างนั้นป้ายขึ้น "กำลังแปล" ค้าง ผู้อ่านไม่รู้ว่าควรรอหรือกดใหม่
