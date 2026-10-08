@@ -1,3 +1,4 @@
+import { joinLayoutBreaks } from '../core/reflow';
 import {
   cropId,
   GROUP_INSTRUCTIONS,
@@ -321,7 +322,7 @@ export class GeminiProvider {
     const out = texts.map(() => '');
     live.forEach((x, n) => {
       const got = items[n]?.out;
-      out[x.i] = typeof got === 'string' ? got : '';
+      out[x.i] = typeof got === 'string' ? joinLayoutBreaks(got) : '';
     });
     return out;
   }

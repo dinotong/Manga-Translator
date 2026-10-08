@@ -5,6 +5,7 @@ import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
 import { placePanels, settlePanels } from '../../core/panel-layout';
 import { fitFont, plateFromCentre } from '../../core/font-fit';
+import { joinLayoutBreaks } from '../../core/reflow';
 import { panelRect, plateAlphaOver } from '../../core/panel-shape';
 
 /**
@@ -440,7 +441,10 @@ export class Overlay {
    */
   private renderBox(b: OverlayBlock, panel: NormRect, aspect: number): string {
     const pct = (v: number) => (v * 100).toFixed(3);
-    const fit = fitFont(panel, aspect, b.text, this.settings.display.fontScale);
+    // Also here, not only where replies are read: translations cached before
+    // the reply path learned to join them still carry the model's line breaks.
+    const text = joinLayoutBreaks(b.text);
+    const fit = fitFont(panel, aspect, text, this.settings.display.fontScale);
 
     const hover = this.settings.display.mode === 'target-plus-source-on-hover' && b.source;
     const style =
@@ -453,7 +457,7 @@ export class Overlay {
     return (
       `<div class="${cls}" style="${style}"${hover ? ' data-hover="1"' : ''}>` +
       this.renderPlate(b, panel, aspect) +
-      `<span class="mt-text">${escapeHtml(b.text)}</span>` +
+      `<span class="mt-text">${escapeHtml(text)}</span>` +
       (hover ? `<span class="mt-src">${escapeHtml(b.source)}</span>` : '') +
       '</div>'
     );

@@ -19,6 +19,7 @@
  * alone.
  */
 
+import { joinLayoutBreaks } from './reflow';
 import type { NormRect } from '../types';
 
 /**
@@ -260,7 +261,7 @@ export function routeItems(
     const page = perPage[at.page];
     if (!page || at.block >= page.length) continue; // an id for a page we did not send
     if (page[at.block] !== null) continue; // duplicate id: the first answer wins
-    page[at.block] = { src: text(item.src), out: text(item.out) };
+    page[at.block] = { src: text(item.src), out: joinLayoutBreaks(text(item.out)) };
     placed++;
   }
 
@@ -268,7 +269,7 @@ export function routeItems(
   if (!numbered && placed === 0 && cropsPerPage.length === 1 && items.length === cropsPerPage[0]) {
     const only = perPage[0]!;
     items.forEach((item, i) => {
-      only[i] = { src: text(item.src), out: text(item.out) };
+      only[i] = { src: text(item.src), out: joinLayoutBreaks(text(item.out)) };
     });
     placed = items.length;
     positional = true;
