@@ -58,6 +58,7 @@ const CACHE_PRESETS = [
   { pages: 40, label: '40 หน้า' },
   { pages: 60, label: 'ทั้งตอน (60)' },
   { pages: 200, label: 'ทั้งเล่ม (200)' },
+  { pages: 1000, label: 'หลายเล่ม (1,000)' },
   { pages: MAX_CACHE_PAGES, label: `เก็บหมด (${MAX_CACHE_PAGES})` },
 ] as const;
 

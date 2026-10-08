@@ -69,11 +69,14 @@ export const MIN_CACHE_BYTES = 20 * 1024 * 1024;
 export const MAX_CACHE_BYTES = 2000 * 1024 * 1024;
 
 /**
- * 200 pages: more than a whole chapter on MangaDex (20–45) and more than most
- * imhentai galleries, so the default reader never meets eviction at all, and
- * costs under a megabyte of disk to promise.
+ * 1000 pages. It was 200, and the owner's own cache was found full at 200/200
+ * on 2026-10-08 — with prefetch reading 40 pages ahead, a reader who returns to
+ * last week's chapter had already lost it and paid for it twice in quota.
+ * Measured on that install, 200 pages took 1.86 MB across both stores, so 1000
+ * is roughly 9 MB: still far under the byte ceiling, and disk was never the
+ * scarce resource here — API requests are.
  */
-export const DEFAULT_CACHE_PAGES = 200;
+export const DEFAULT_CACHE_PAGES = 1000;
 
 /** Unchanged from the fixed budget this setting replaced. */
 export const DEFAULT_CACHE_BYTES = 200 * 1024 * 1024;

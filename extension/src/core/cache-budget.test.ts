@@ -109,6 +109,10 @@ describe('estimateBytesForPages', () => {
     // default defensible in the first place.
     expect(estimateBytesForPages(200)).toBeLessThan(MB);
   });
+
+  it('keeps the default page budget well inside the default byte ceiling', () => {
+    expect(estimateBytesForPages(DEFAULT_CACHE_PAGES)).toBeLessThan(DEFAULT_CACHE_BYTES / 10);
+  });
 });
 
 describe('planEviction — nothing to do', () => {
