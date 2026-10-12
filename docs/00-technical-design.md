@@ -265,7 +265,8 @@ content script                service worker (มี host_permissions)
 
 ```
 1. currentSrc ขึ้นต้นด้วย blob: หรือ data:
-   → content script fetch() → ArrayBuffer (transferable)      ← MangaDex อยู่ทางนี้
+   → content script fetch() → ArrayBuffer
+   → ถ้า blob fetch ไม่ได้ แต่รูป decode อยู่แล้ว → canvas PNG แบบ lossless
 2. รูปโหลดเสร็จแล้ว และ canvas อ่านได้ (ลอง drawImage 8×8 + toDataURL)
    → content script: createImageBitmap(img) โดยตรง ไม่ต้อง fetch ซ้ำเลย
 3. เป็น http(s) cross-origin ที่ canvas tainted
@@ -276,8 +277,8 @@ content script                service worker (มี host_permissions)
 
 | ชนิด | วิธี acquire | หมายเหตุ |
 |---|---|---|
-| `blob:` URL | **content script `fetch()`** | ✅ **MangaDex ใช้ทางนี้** — blob ผูกกับ origin ของหน้า **SW fetch ไม่ได้เด็ดขาด** และเพราะ same-origin จึง **ไม่ tainted** อ่าน pixel ได้ตรงๆ |
-| `data:` URL | content script decode | เหมือน blob |
+| `blob:` URL | **content script `fetch()`**; ถ้าหมดอายุ/อ่านไม่ได้ ใช้รูปที่ decode แล้ว encode เป็น PNG แบบ lossless ผ่าน canvas | ✅ MangaDex ใช้ raw bytes ได้; MangaPlus อาจสร้าง blob ที่ fetch ซ้ำไม่ได้ แต่ภาพที่ `<img>` decode แล้วอ่าน pixel ได้เพราะ same-origin |
+| `data:` URL | content script `fetch()` / decode | เหมือน blob |
 | `<img src>` same-origin / มี CORS header | content script `createImageBitmap(img)` | ถูกที่สุด — ใช้ bitmap ที่เบราว์เซอร์ decode ไว้แล้ว |
 | `<img src>` cross-origin ไม่มี CORS | **SW `fetch(currentSrc)`** | ใช้ `currentSrc` ไม่ใช่ `src` (รองรับ `srcset`/`<picture>`) |
 | `<img>` lazy | รอ `img.complete && naturalWidth > 0` แล้วค่อย acquire | MutationObserver จับ `data-src → src` |
@@ -286,7 +287,7 @@ content script                service worker (มี host_permissions)
 | Custom reader / WebGL | screenshot fallback | |
 
 **บทเรียน:** SW-fetch ไม่ใช่ทางหลักอย่างที่คิดตอนแรก — มันคือทางสำหรับ **cross-origin CDN ที่ไม่มี CORS** เท่านั้น
-ส่วน reader สมัยใหม่ที่โหลดรูปเองด้วย JS (MangaDex, reader ที่มี DRM/ตัวนับหน้า) จะสร้าง `blob:` ซึ่ง **ต้องอ่านจาก content script เท่านั้น**
+ส่วน reader สมัยใหม่ที่โหลดรูปเองด้วย JS (MangaDex, MangaPlus, reader ที่มี DRM/ตัวนับหน้า) จะสร้าง `blob:` ซึ่ง **ต้องอ่านจาก content script เท่านั้น**; ถ้า URL ถูก revoke หลัง `<img>` decode แล้ว ให้ใช้ canvas PNG fallback ที่ D-045 ตัดสิน
 → `acquire.ts` ต้องรองรับ **ทั้งสองทาง** ตั้งแต่ M1 ไม่ใช่ค่อยเพิ่มทีหลัง
 
 ### 4.3 Screenshot fallback — ข้อควรระวังที่ต้องออกแบบ
@@ -427,7 +428,7 @@ Giga Viewer สับ tile รูปแล้วประกอบใหม่�
 > 🔴 **ต้องเข้า benchmark M0:** วัด accuracy ที่ 371 px / 760 px / 1280 px / 3500 px
 > ถ้า 371 px อ่านไม่ออก ต้องรู้ตั้งแต่ M0 เพื่อออกแบบ UX "กรุณาซูม" ไม่ใช่ไปเจอตอน M5
 
-### 4.4d สรุป: 3 เว็บ = ครบทุก acquisition path
+### 4.4d สรุป acquisition paths
 
 | | MangaDex | imhentai | **Shonen Jump+** |
 |---|---|---|---|
@@ -455,6 +456,19 @@ export const gigaViewer: SiteProfile = {
 };
 ```
 
+### 4.4e MangaPlus
+
+MangaPlus viewer pages such as `/viewer/1007468` expose each page as
+`<img class="zao-image" src="blob:https://mangaplus.shueisha.co.jp/...">`.
+This is the same origin-bound `blob:` acquisition path as MangaDex, not a new
+network path: match only `img.zao-image` on the viewer route and read its bytes
+from the content script. The site does not let us derive the next blob URL, but
+measured in the viewer the DOM already held six decoded pages; after scrolling
+to page 4 it held nine while retaining earlier pages. Publish those loaded
+images in DOM order through `prefetch.published`; acquire each blob from its
+element in the content script, subject to the existing lookahead, one-request,
+and rate limits. Do not guess URLs.
+
 ### 4.5 Resolution policy — อย่าส่งภาพ 17 MP เข้า OCR
 
 รูป MangaDex คือ 3496×4960 ถ้าเก็บเป็น bitmap เต็มความละเอียด = **69 MB RAM ต่อ 1 หน้า**
@@ -472,7 +486,7 @@ imhentai 1280×1808 → detBitmap 1280  · recBitmap 1280   (ใช้ต้น�
 - manga-ocr รับ input 224×224 → bubble crop ที่ ~400 px กว้างก็เกินพอ ไม่ต้องใช้ต้นฉบับ
 - ปล่อย bitmap ต้นฉบับทันทีหลังสร้าง 2 ตัวนี้ (`.close()`)
 - ทั้ง 2 ค่าเป็น setting ใน performance preset (Fast / Balanced / Quality)
-- **hash คำนวณจาก bytes ต้นฉบับ ไม่ใช่จาก bitmap ที่ย่อแล้ว** — ไม่งั้น cache จะพังเมื่อเปลี่ยน preset
+- **hash คำนวณจาก bytes ต้นฉบับ ไม่ใช่จาก bitmap ที่ย่อแล้ว** — ไม่งั้น cache จะพังเมื่อเปลี่ยน preset; ข้อยกเว้นเดียวคือ blob ที่ fetch ไม่ได้ ซึ่งใช้ bytes ของ PNG lossless จากภาพที่ decode แล้ว (D-045)
 
 ### 4.6 Webtoon long strip — เคสที่ handoff ตกไป
 

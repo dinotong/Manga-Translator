@@ -145,6 +145,32 @@ const mangadex: SiteProfile = {
 };
 
 /**
+ * MangaPlus creates page images as origin-bound blob URLs. As with MangaDex,
+ * those bytes must be read in the content script rather than the service
+ * worker. Only the viewer route and its page images are in scope.
+ */
+const mangaplus: SiteProfile = {
+  id: 'mangaplus',
+  match: (u) => u.hostname === 'mangaplus.shueisha.co.jp',
+  seedHosts: ['mangaplus.shueisha.co.jp'],
+  pageSelector: 'img.zao-image',
+  acquire: 'content-script',
+  reader: 'auto',
+  isReaderPage: (u) => /^\/viewer\/\d+\/?$/.test(u.pathname),
+  setKey: (u) => u.pathname.match(/^\/viewer\/(\d+)\/?$/)?.[1] ?? null,
+  prefetch: {
+    published: (doc) =>
+      Array.from(doc.querySelectorAll('img.zao-image')).flatMap((el, index) => {
+        const img = el as HTMLImageElement;
+        const url = img.currentSrc || img.src;
+        if (!url || !img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) return [];
+        return [{ page: index + 1, url, top: topOf(img) }];
+      }),
+  },
+  notes: 'Viewer publishes decoded blob images in DOM order; acquire their bytes in the content script.',
+};
+
+/**
  * imhentai — the opposite case, and the reason both acquisition paths exist.
  *
  * Images come from a cross-origin CDN with no CORS header, so the canvas is
@@ -446,7 +472,7 @@ export const DEFAULT_PROFILE: SiteProfile = {
   reader: 'auto',
 };
 
-const REGISTRY: readonly SiteProfile[] = [mangadex, imhentai, luscious, ehentai, nhentai];
+const REGISTRY: readonly SiteProfile[] = [mangadex, mangaplus, imhentai, luscious, ehentai, nhentai];
 
 export function profileFor(url: URL): SiteProfile {
   return REGISTRY.find((p) => p.match(url)) ?? DEFAULT_PROFILE;

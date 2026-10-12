@@ -123,7 +123,7 @@ function Popup() {
         <p class="hint">
           จำไว้ให้เอง — เปิดครั้งเดียวแล้วกลับมาอ่านเว็บนี้อีกก็ทำงานต่อโดยไม่ต้องเปิดใหม่
           {settings.performance.prefetchLookahead > 0
-            ? ` · แปลล่วงหน้าอีก ${settings.performance.prefetchLookahead} หน้าบนเว็บที่เดาหน้าถัดไปได้`
+            ? ` · แปลล่วงหน้าอีก ${settings.performance.prefetchLookahead} หน้าบนเว็บที่รู้รูปหน้าถัดไปได้`
             : ''}
         </p>
         <p class="hint">

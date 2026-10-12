@@ -40,6 +40,15 @@ const mpvImage = (page: number, src: string, top: number) => ({
   src,
 });
 
+const mangaPlusImage = (src: string, top: number, loaded = true) => ({
+  ...box(top, 784, 1145),
+  currentSrc: src,
+  src,
+  complete: loaded,
+  naturalWidth: loaded ? 784 : 0,
+  naturalHeight: loaded ? 1145 : 0,
+});
+
 /**
  * Every URL here was opened in a real browser on 2026-08-15 to confirm which
  * kind of page it is, rather than assumed from its shape.
@@ -79,6 +88,48 @@ describe('isReaderPage — MangaDex', () => {
     expect(kind('https://mangadex.org/titles/latest')).toBe(false);
     expect(kind('https://mangadex.org/')).toBe(false);
     expect(kind('https://mangadex.org/search?q=test')).toBe(false);
+  });
+});
+
+describe('MangaPlus', () => {
+  it('selects the viewer pages and reads their blob URLs in the content script', () => {
+    const profile = at('https://mangaplus.shueisha.co.jp/viewer/1007468');
+    expect(profile.id).toBe('mangaplus');
+    expect(profile.pageSelector).toBe('img.zao-image');
+    expect(profile.acquire).toBe('content-script');
+  });
+
+  it('recognizes only viewer routes and keys the set by its viewer id', () => {
+    expect(kind('https://mangaplus.shueisha.co.jp/viewer/1007468')).toBe(true);
+    expect(kind('https://mangaplus.shueisha.co.jp/viewer/1007468/')).toBe(true);
+    expect(kind('https://mangaplus.shueisha.co.jp/')).toBe(false);
+    expect(kind('https://mangaplus.shueisha.co.jp/title/1007468')).toBe(false);
+    expect(setOf('https://mangaplus.shueisha.co.jp/viewer/1007468')).toBe('1007468');
+  });
+
+  it('matches only the MangaPlus reader host', () => {
+    expect(at('https://mangaplus.shueisha.co.jp/viewer/1007468').id).toBe('mangaplus');
+    expect(at('https://shueisha.co.jp/viewer/1007468').id).not.toBe('mangaplus');
+  });
+
+  it('publishes already-decoded blob pages in DOM order for bounded prefetch', () => {
+    const profile = at('https://mangaplus.shueisha.co.jp/viewer/1007468');
+    const pages = profile.prefetch?.published?.(
+      docOf({
+        'img.zao-image': [
+          mangaPlusImage('blob:https://mangaplus.shueisha.co.jp/page-1', 30),
+          mangaPlusImage('blob:https://mangaplus.shueisha.co.jp/page-2', 1228),
+          mangaPlusImage('blob:https://mangaplus.shueisha.co.jp/page-3', 2427),
+          mangaPlusImage('blob:https://mangaplus.shueisha.co.jp/page-4', 3625, false),
+        ],
+      }),
+    );
+
+    expect(pages).toEqual([
+      { page: 1, url: 'blob:https://mangaplus.shueisha.co.jp/page-1', top: 30 },
+      { page: 2, url: 'blob:https://mangaplus.shueisha.co.jp/page-2', top: 1228 },
+      { page: 3, url: 'blob:https://mangaplus.shueisha.co.jp/page-3', top: 2427 },
+    ]);
   });
 });
 

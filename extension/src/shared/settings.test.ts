@@ -118,7 +118,7 @@ describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => 
     const s = hydrate({ version: 2, autoTranslate: true });
     expect(s.autoSites).not.toContain('wikipedia.org');
     expect(s.autoSites).not.toContain('*');
-    expect(s.autoSites.length).toBeLessThan(10);
+    expect(s.autoSites).toEqual(PROFILE_HOSTS);
   });
 
   it('gives an empty list to someone who had it off', () => {

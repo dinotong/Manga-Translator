@@ -8,6 +8,50 @@
 
 ---
 
+## D-046 · **MangaPlus อ่านล่วงหน้าจากรูปที่ mount ใน DOM ไม่ใช่เดา URL**
+**2026-10-12 · `content/site-profiles.ts`, `entrypoints/content.ts`**
+
+### หลักฐาน
+
+ใน `/viewer/1007468` มีรูป `.zao-image` ที่ decode แล้ว 6 รูปอยู่ใน DOM พร้อม `blob:` URL; หลังเลื่อนไปแถวรูปที่ 4 รายการโตเป็น 9 รูป และรูปเก่ายังคงอยู่ตามลำดับเดิม. URL เหล่านี้อ่านซ้ำจาก service worker ไม่ได้ (D-045) แต่ content script อ่าน bytes จาก image element ได้.
+
+### ตัดสินใจ
+
+ให้ MangaPlus ส่งเฉพาะรูปที่ decode แล้วผ่าน `prefetch.published` โดยใช้ลำดับใน DOM เป็นเลขหน้า และให้ prefetch ไป acquire จาก image element ใน content script ก่อนส่งเข้า pipeline. การเลือกหน้าถัดไปยังใช้ `nextPublished` และกติกาเดิมทั้งหมด: จำกัด lookahead ตาม setting, speculative request ทีละหนึ่ง, เว้นช่วงอย่างน้อย 500 ms, หยุดเมื่อแท็บถูกซ่อน และงานหน้าที่อ่านอยู่ได้คิวก่อน.
+
+ไม่เดา URL หรือขอ API เพิ่ม; ถ้าเว็บยังไม่ mount รูปหน้าถัดไป จะยังไม่มีงานให้ prefetch. พฤติกรรมนี้ใช้ได้กับทั้ง blob และเว็บที่ `published` URL แต่ใช้ `sw-fetch` อยู่แล้ว.
+
+การตัดสินใจอาศัย DOM order ที่วัดได้จริงและเว็บคงรูปเก่าไว้เมื่อเพิ่มหน้าระหว่างการทดสอบ · ถ้าเว็บเปลี่ยนเป็น virtualize/reorder หน้า ให้ปิด `published` จนกว่าจะพบ page id ที่เสถียร · ไม่มี schema migration · ย้อนกลับได้โดยลบ `prefetch` จาก MangaPlus.
+
+### ✅ ยืนยันบนเว็บจริง
+
+**2026-10-12:** เจ้าของทดลอง build ที่มี DOM-based prefetch บน MangaPlus แล้ว และยืนยันว่าใช้งานได้.
+
+---
+
+## D-045 · **ถ้า MangaPlus revoke blob หลัง decode ให้อ่านภาพจาก DOM ที่ decode แล้วแทน**
+**2026-10-12 · `content/acquire.ts`, `shared/hash.ts`**
+
+### หลักฐาน
+
+ทดสอบ MangaPlus `/viewer/{id}` แล้ว `<img class="zao-image">` แสดงภาพได้ แต่ `fetch(img.currentSrc)` ใน content script ปฏิเสธด้วย `TypeError: Failed to fetch` แม้ URL เป็น `blob:https://mangaplus.shueisha.co.jp/...` — เป็นข้อจำกัดของ blob/context หรือ URL ถูก revoke ไม่ใช่หลักฐานว่าเครื่อง offline
+
+### ตัดสินใจ
+
+ลองอ่าน raw bytes ตามเดิมก่อน หาก fetch ของ `blob:` ล้มเหลว ให้ใช้ภาพที่ browser decode ไว้แล้ว วาดลง canvas ที่ origin-clean และ encode เป็น PNG lossless ก่อนส่งเข้า pipeline; ถ้า canvas อ่านไม่ได้ ให้รายงาน `ACQUIRE_FAILED` พร้อมสาเหตุทั้งสองทาง
+
+hash ปกติยังมาจาก bytes ต้นฉบับ ส่วน fallback ใช้ bytes ของ PNG lossless ที่สร้างจากภาพนั้น Hash ยังเกิดก่อน resize จึงไม่ผูกกับ OCR preset และ URL ที่หมดอายุไม่ถูกใช้เป็น cache key
+
+### ทำไมไม่ใช้ทางอื่น
+
+- ส่ง URL blob ไป service worker ใช้ไม่ได้ เพราะ blob ผูกกับ context/origin ของหน้า
+- ส่ง screenshot ทั้ง viewport ไม่จำเป็นเมื่อ `<img>` decode อยู่แล้ว และเพิ่มความซับซ้อนของ crop/overlay
+- ถ้าไม่ fallback จะทำให้หน้าที่ browser แสดงได้ถูกปฏิเสธโดย extension ทั้งที่มี pixel ให้ใช้งาน
+
+การเปลี่ยนมีผลเฉพาะ acquisition ของ blob ที่ fetch ซ้ำไม่ได้; raw-byte path เดิมไม่เปลี่ยน · ไม่มี schema migration · ย้อนกลับได้โดยลบ fallback และคง error เดิม
+
+---
+
 ## D-044 · **ที่ได้ 2 หน้าไม่ใช่ 3 คือ “เพดานจำนวน crop” ไม่ใช่หน้าต่างเวลา** · และ `lingered=3011ms` เปิดโปงคำสัญญาที่ไฟล์นั้นเขียนไว้เองแล้วผิด
 **2026-08-16 · `core/batch.ts`, `background/read-batcher.ts`, `background/read-batcher.test.ts`, `entrypoints/content.ts`**
 

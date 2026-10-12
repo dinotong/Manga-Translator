@@ -623,7 +623,7 @@ function Options() {
           <b>ตั้งลึกขึ้น = ไปได้ไกลขึ้น ไม่ใช่ยิงถี่ขึ้น</b> — ยังคงยิงทีละคำขอ เว้นอย่างน้อย 0.5 วินาที
           และ<b>หยุดทันทีที่สลับไปแท็บอื่น</b> เพื่อไม่ให้รบกวนเซิร์ฟเวอร์ของเว็บที่เราไปอ่าน ·
           หน้าที่คุณกำลังดูอยู่ได้คิวก่อนการเดาเสมอ
-          · ใช้ได้เฉพาะเว็บที่เดา URL หน้าถัดไปได้ (imhentai) · MangaDex สร้าง URL ในโค้ดของตัวเอง จึงเดาไม่ได้และไม่ทำ
+          · ใช้ได้กับเว็บที่เดา URL ได้ (imhentai) หรือเว็บที่ mount รูปหน้าถัดไปไว้ใน DOM (MangaPlus, luscious, e-hentai MPV) · MangaDex ไม่เปิด URL หน้าถัดไปไว้ล่วงหน้า
         </p>
         {effectiveLookahead(s.performance.prefetchLookahead, s.cache.maxPages) <
           s.performance.prefetchLookahead && (

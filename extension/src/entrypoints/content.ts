@@ -28,6 +28,7 @@ import { toErrorPayload } from '../shared/errors';
 import { makeLog } from '../shared/log';
 import {
   type ContentToSw,
+  type ImageRef,
   type JobSource,
   PORT_NAME,
   type Stage,
@@ -621,6 +622,7 @@ export default defineContentScript({
       page: number;
       url: string;
       guessed: boolean;
+      img?: HTMLImageElement;
     }
 
     /**
@@ -639,7 +641,10 @@ export default defineContentScript({
         lookahead: gate.lookahead,
         covered: prefetchCovered,
       });
-      return next ? { page: next.page, url: next.url, guessed: false } : null;
+      if (!next) return null;
+      const img = scanImages(profile).find((candidate) => srcOf(candidate) === next.url);
+      if (next.url.startsWith('blob:') && !img) return null;
+      return { page: next.page, url: next.url, guessed: false, ...(img ? { img } : {}) };
     }
 
     /** A page whose URL follows from the one on screen. See core/page-url.ts. */
@@ -698,7 +703,7 @@ export default defineContentScript({
       };
     }
 
-    function prefetchTick(): void {
+    async function prefetchTick(): Promise<void> {
       const cfg = profile.prefetch;
       if (!cfg) return;
 
@@ -755,6 +760,34 @@ export default defineContentScript({
       };
       active.set(job.id, job);
       byKey.set(target.url, job);
+      let image: ImageRef | undefined;
+      let natural = { w: 0, h: 0 };
+      try {
+        if (target.img) {
+          if (!target.img.isConnected || srcOf(target.img) !== target.url) {
+            prefetchCovered.delete(target.page);
+            settle(job);
+            return;
+          }
+          const acquired = await acquire(target.img, profile);
+          if (!active.has(job.id)) return;
+          if (!target.img.isConnected || srcOf(target.img) !== target.url) {
+            prefetchCovered.delete(target.page);
+            settle(job);
+            return;
+          }
+          natural = acquired.natural;
+          if (acquired.kind === 'bytes') image = acquired.ref;
+        }
+      } catch (err) {
+        const payload = toErrorPayload(err);
+        prefetchFailures.set(payload.code, (prefetchFailures.get(payload.code) ?? 0) + 1);
+        log.debug(`prefetch acquire failed page ${target.page}: ${payload.code} ${payload.message}`);
+        settle(job);
+        return;
+      }
+
+      if (!active.has(job.id)) return;
       prefetchStats.started++;
       log.debug(`prefetch page ${target.page} (${target.guessed ? 'guessed' : 'published'})`);
       send({
@@ -763,7 +796,8 @@ export default defineContentScript({
         source: {
           elementKey: `prefetch-${target.page}`,
           url: target.url,
-          natural: { w: 0, h: 0 },
+          ...(image ? { image } : {}),
+          natural,
           pageUrl: location.href,
           setKey,
           prefetch: true,

@@ -1,12 +1,11 @@
 /**
  * Content hashes.
  *
- * The image hash is taken from the bytes as fetched, never from decoded pixels.
- * That is cheaper (no decode), works on a tainted image, and — the reason it is
- * a rule rather than an optimisation — stays stable when the resolution preset
- * changes, so switching Fast/Balanced/Quality does not invalidate every cached
- * page. It also survives CDN URLs that are signed and expire, which a URL-keyed
- * cache would not.
+ * The image hash is taken from the bytes as fetched, except when a blob URL is
+ * no longer fetchable and the loaded image must be losslessly encoded as PNG.
+ * In both cases hashing precedes resolution changes, so switching
+ * Fast/Balanced/Quality does not invalidate every cached page. It also survives
+ * CDN URLs that are signed and expire, which a URL-keyed cache would not.
  */
 
 function base64url(buffer: ArrayBuffer): string {
