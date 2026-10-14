@@ -52,7 +52,7 @@ export function renderResult(
     </h2>
     <div class="card-body">
       <div class="stage">
-        <img src="${imageUrl}" alt="" />
+        <img src="${escapeHtml(imageUrl)}" alt="" />
         <div class="layer">${boxes}</div>
       </div>
       <div>
