@@ -5,7 +5,11 @@
  * guess, so the rules are deliberately strict and kept in one pure function that
  * can be tested without a browser:
  *
- *   - at most one speculative request in flight, ever;
+ *   - speculation is bounded by the shared in-flight budget, never by itself:
+ *     at most `speculativeAllowance(maxInFlight)` guesses at once (budget minus
+ *     one slot always held back for a page the reader can see — default 8 gives
+ *     7, ceiling 12). This used to be one; D-027 raised it because one guess at
+ *     a time could not keep ahead of a reader turning a page every 3-4 s;
  *   - at least 500 ms between starts, so a run of cheap failures cannot turn
  *     into a burst;
  *   - nothing at all while the tab is hidden — a backgrounded reader is not

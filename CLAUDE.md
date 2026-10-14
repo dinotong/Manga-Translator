@@ -64,7 +64,7 @@ Discover → Acquire → Detect → Group → Recognize → Order → Translate 
 - ❌ **ห้าม** เก็บ OCR result ใน `chrome.storage.local` — ใช้ IndexedDB
 - ❌ **ห้าม** hardcode `'ja'` / `'th'` ที่ไหนเลย — ใช้ `LangCode` เป็น parameter เสมอ (`from`/`to` เข้า cache key ด้วย)
 - ❌ **ห้าม** ผูก overlay กับ DOM element — ผูกกับ `imageHash` เท่านั้น
-- ❌ **ห้าม** prefetch รัวๆ — ≤ 1 req พร้อมกัน, เว้น ≥ 500 ms, lookahead default 3 หน้า
+- ❌ **ห้าม** prefetch รัวๆ — speculation ถือได้ไม่เกิน `speculativeAllowance(maxInFlight)` (งบ in-flight − 1 ช่องที่กันไว้ให้หน้าที่คนอ่านมองอยู่ · default 8 → 7, เพดาน 12) ตั้งแต่ D-027 · เว้นการเริ่มแต่ละครั้ง ≥ 500 ms · lookahead มีเพดาน · เดาผิดติดกัน 2 ครั้งปิดทั้งเล่ม · ไม่ prefetch ตอนแท็บถูกซ่อน
 - ✅ ตรรกะยากทั้งหมดต้องอยู่ใน `core/` เป็น **pure function + unit test**
 - ✅ ทุก milestone ต้องพิสูจน์บนเว็บมังงะจริง ไม่ใช่แค่ test ผ่าน
 
@@ -76,7 +76,8 @@ Discover → Acquire → Detect → Group → Recognize → Order → Translate 
 
 ## Stack
 
-TypeScript (strict) · WXT + Vite · onnxruntime-web + transformers.js · Preact (popup/options เท่านั้น) · idb · Vitest · Playwright · Biome
+TypeScript (strict) · WXT + Vite · onnxruntime-web · Preact (popup/options เท่านั้น) · idb · Vitest
+(ยังไม่ได้ติดตั้ง: Playwright, Biome, transformers.js)
 
 ## คำสั่ง
 
