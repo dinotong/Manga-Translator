@@ -17,9 +17,9 @@ speech bubbles.
 | Permission | Why it is needed |
 |---|---|
 | `offscreen` | Runs the on-device text detector (ONNX Runtime with WebGPU/WebAssembly). The service worker has no DOM and cannot host it; the offscreen document is the MV3-sanctioned place for this. |
-| `storage` | Stores the user's settings and their own Gemini API key in `chrome.storage.local`. Never synced. |
+| `storage` | Stores the user's settings and their own Gemini API key in `chrome.storage.local`. Never synced. Access is restricted to trusted extension contexts (`setAccessLevel`); content scripts get a settings view with the key removed. |
 | `contextMenus` | Adds "Translate this image" to the right-click menu so a user can translate one image on any site without enabling automatic translation there. |
-| Host permission `<all_urls>` | (1) Manga images are usually served from a different domain (a CDN) than the reading site; reading their pixels requires fetching them from the service worker. (2) Sending the cropped text regions to the Gemini API. The content script is declared for all pages so the right-click action and per-site switch work anywhere, but on a site the user has not switched on it only reads its settings and stays idle: no image is read and nothing is sent. |
+| Host permission `<all_urls>` | (1) Manga images are usually served from a different domain (a CDN) than the reading site; reading their pixels requires fetching them from the service worker (http/https only). (2) Sending the cropped text regions to the Gemini API. The content script is declared for all pages so the right-click action and per-site switch work anywhere, but on a site the user has not switched on it only reads its settings and stays idle: no image is read and nothing is sent. |
 
 ## Remote code
 
