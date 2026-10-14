@@ -3,6 +3,8 @@
 > อัปเดต 2026-08-16 · **ทำจากบนลงล่าง** · ติ๊ก `[x]` เมื่อเสร็จ
 > เป้าหมายที่เจ้าของโปรเจกต์ยืนยัน: **เอา extension ไปอ่านมังงะได้จริง**
 
+> ✅ **[Release v1.0.3](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.3) ขึ้นแล้ว 2026-10-14** (Pre-release · ZIP 11,244,836 bytes · SHA-256 `e493764a…b86306` · tag ชี้ไป `4aafb8d`) · ต่อไป: ตั้งค่าอัปขึ้น Chrome Web Store
+
 ## Issues จากภายนอก 2026-10-14 — milestone `1.0.3`
 
 HetCreep เปิด [16 issue](https://github.com/dinotong/Manga-Translator/issues) จากการตรวจรีโป · ตรวจกับโค้ด v1.0.2 แล้ว **จริงทั้งหมด ไม่มีข้อไหนร้ายแรง** · รายละเอียดอยู่ใน issue — ที่นี่เก็บแค่ลำดับ + ข้อที่เราสรุปต่างจาก issue
