@@ -159,3 +159,29 @@ export function observePage(
   const reread = working !== processedAs && spent < MAX_REREADS_PER_SET;
   return { counts, working, rereads: spent + (reread ? 1 : 0), reread };
 }
+
+/**
+ * The source language a freshly read page should be cached under.
+ *
+ * The first page of a set under `auto` is read before the set has learned its
+ * language, so it is processed as `used = 'auto'`. Once the reply has taught the
+ * set that it is, say, Japanese, every later visit to that page looks it up under
+ * the learned language — and a record stored under `auto` would never be found
+ * again, costing a whole re-read and re-translation of a page already paid for.
+ *
+ * So the page is filed under the learned language instead, but only when that is
+ * honest: `auto` must resolve to exactly the same processing as the learned
+ * language (`resolve` is the detection-language mapping), otherwise the geometry
+ * in the record was computed under rules the set has since rejected and filing it
+ * under the new language would serve it as if it were right.
+ *
+ * Generic over the language type so this stays free of any concrete code.
+ */
+export function cacheSource<S extends string>(
+  used: S,
+  learned: S,
+  resolve: (s: S) => string,
+): S {
+  if (used !== 'auto' || learned === 'auto' || learned === used) return used;
+  return resolve(learned) === resolve(used) ? learned : used;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FLIP_MARGIN, type LangEvidence, MAX_REREADS_PER_SET, observePage } from './lang-memory';
+import { cacheSource, FLIP_MARGIN, type LangEvidence, MAX_REREADS_PER_SET, observePage } from './lang-memory';
 import type { LangCode } from '../types';
 
 /**
@@ -144,5 +144,28 @@ describe('observePage', () => {
       const d = observePage({ counts: { ja: 1 }, rereads: -5 }, 'ja', 'en', 'en');
       expect(d.rereads).toBeGreaterThanOrEqual(0);
     });
+  });
+});
+
+describe('cacheSource', () => {
+  // Mirrors resolveDetectionLang: 'auto' is processed as the manga default.
+  const resolve = (s: string) => (s === 'auto' ? 'ja' : s);
+
+  it('files a first page read under auto under the language it turned out to be', () => {
+    expect(cacheSource('auto', 'ja', resolve)).toBe('ja');
+  });
+
+  it('keeps auto when the learned language was processed differently', () => {
+    // The record's geometry was computed under the wrong direction rules.
+    expect(cacheSource('auto', 'en', resolve)).toBe('auto');
+  });
+
+  it('keeps auto when nothing was learned', () => {
+    expect(cacheSource('auto', 'auto', resolve)).toBe('auto');
+  });
+
+  it('never moves a page that was read under a concrete language', () => {
+    expect(cacheSource('ja', 'en', resolve)).toBe('ja');
+    expect(cacheSource('en', 'en', resolve)).toBe('en');
   });
 });

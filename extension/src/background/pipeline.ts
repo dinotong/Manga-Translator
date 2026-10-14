@@ -7,7 +7,7 @@ import {
   servesGrouping,
   translationKey,
 } from '../cache/db';
-import { observePage } from '../core/lang-memory';
+import { cacheSource, observePage } from '../core/lang-memory';
 import { planMerges } from '../core/merge-proposals';
 import { detectScript } from '../core/script';
 import type { RoutedGroup } from '../core/batch';
@@ -16,7 +16,7 @@ import { putBytes, releaseBytes, takeBytes } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { textHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
-import { resolveDetectionLang, type SourceLang } from '../shared/lang';
+import { resolveDetectionLang, type SourceLang, type TargetLang } from '../shared/lang';
 import type { JobSource, OverlayBlock, Stage } from '../shared/messages';
 import { saveSettings, type Settings } from '../shared/settings';
 import type { LangCode } from '../types';
@@ -119,7 +119,7 @@ export async function runJob(
   }
   if (cached) {
     log.debug(`ocr hit ${acquired.hash}`);
-    const blocks = await translateCached(blocksFor(cached.blocks, grouping), gemini, settings, signal);
+    const blocks = await translateCached(blocksFor(cached.blocks, grouping), gemini, from, to, signal);
     remember(source.setKey, blocks, settings.translation.contextBubbles);
     return {
       hash: acquired.hash,
@@ -251,6 +251,16 @@ export async function runJob(
     return runJob(source, learned.settings, onProgress, signal, true);
   }
 
+  // A first page read under `auto` is filed under the language the set has now
+  // learned, or every later visit — which looks it up under that language —
+  // would miss and pay for the whole page again. See core/lang-memory.ts.
+  const storeFrom = cacheSource(
+    from,
+    effectiveSource(learned.settings, source.setKey),
+    resolveDetectionLang,
+  );
+  const storeKey = storeFrom === from ? key : ocrKey(detectorId, gemini.recognizerId, storeFrom, acquired.hash);
+
   /* ---- 5. believe the model's grouping only where geometry agrees ---- */
   //
   // The model has read every crop and may say some of them are one continuous
@@ -355,9 +365,9 @@ export async function runJob(
   // blocks it was made of, so the reader can still take the merge back off
   // without re-reading the page. See cache/db.ts.
   await putOcr({
-    key,
+    key: storeKey,
     imageHash: acquired.hash,
-    from,
+    from: storeFrom,
     natural: detect.natural,
     blocks: records,
     format: OCR_RECORD_FORMAT,
@@ -366,8 +376,8 @@ export async function runJob(
   await putTranslations(
     await Promise.all(
       pairs.map(async (p) => ({
-        key: translationKey(gemini.id, gemini.model, from, to, await textHash(p.src)),
-        from,
+        key: translationKey(gemini.id, gemini.model, storeFrom, to, await textHash(p.src)),
+        from: storeFrom,
         to,
         src: p.src,
         out: p.out,
@@ -397,11 +407,13 @@ export async function runJob(
 async function translateCached(
   records: readonly OcrBlockRecord[],
   gemini: KeyRing,
-  settings: Settings,
+  // The job's working language, never the raw setting: under `auto` the setting
+  // says 'auto' while the pages were written under what the set learned, and
+  // looking them up under the setting missed every one of them.
+  from: SourceLang,
+  to: TargetLang,
   signal?: AbortSignal,
 ): Promise<OverlayBlock[]> {
-  const from = settings.lang.source;
-  const to = settings.lang.target;
 
   const keys = await Promise.all(
     records.map(async (r) =>
