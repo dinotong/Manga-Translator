@@ -9,26 +9,33 @@ HetCreep เปิด [16 issue](https://github.com/dinotong/Manga-Translator/is
 **issue คือคิวตัวจริง** · commit ใส่ `Fixes #N` แล้ว issue ปิดเองตอน push · ติ๊กที่นี่เมื่อ push แล้ว
 
 1. **งานสั้น**
-   - [ ] [#3](https://github.com/dinotong/Manga-Translator/issues/3) cache คำแปลอ่านด้วย `auto` เขียนด้วย `ja` — โดนเฉพาะคนตั้ง `auto` (default คือ `ja`)
-   - [ ] [#9](https://github.com/dinotong/Manga-Translator/issues/9) LICENSE ที่ root
-   - [ ] [#12](https://github.com/dinotong/Manga-Translator/issues/12) ตัด `activeTab` · **ห้ามตัด `<all_urls>`** (SW fetch ข้าม CORS + รองรับเว็บใดก็ได้)
-   - [ ] [#13](https://github.com/dinotong/Manga-Translator/issues/13) ขั้นต่ำจริงคือ **Chrome 116** (`runtime.getContexts`) ไม่ใช่ 113 · INSTALL.md ที่บอกว่า <113 ยังใช้ได้นั้นผิด
-   - [ ] [#1](https://github.com/dinotong/Manga-Translator/issues/1) `SECURITY.md` (Private vulnerability reporting เปิดแล้ว)
-   - [ ] [#14](https://github.com/dinotong/Manga-Translator/issues/14) เอกสารเพี้ยนจากโค้ด — รวมกฎเหล็ก prefetch "≤ 1 req" ใน CLAUDE.md ที่ล้าหลัง D-027
+   - [x] [#3](https://github.com/dinotong/Manga-Translator/issues/3) cache คำแปลอ่านด้วย `auto` เขียนด้วย `ja` — โดนเฉพาะคนตั้ง `auto` (default คือ `ja`)
+   - [x] [#9](https://github.com/dinotong/Manga-Translator/issues/9) LICENSE ที่ root
+   - [x] [#12](https://github.com/dinotong/Manga-Translator/issues/12) ตัด `activeTab` · **ห้ามตัด `<all_urls>`** (SW fetch ข้าม CORS + รองรับเว็บใดก็ได้)
+   - [x] [#13](https://github.com/dinotong/Manga-Translator/issues/13) ขั้นต่ำจริงคือ **Chrome 116** (`runtime.getContexts`) ไม่ใช่ 113 · INSTALL.md ที่บอกว่า <113 ยังใช้ได้นั้นผิด
+   - [x] [#1](https://github.com/dinotong/Manga-Translator/issues/1) `SECURITY.md` (Private vulnerability reporting เปิดแล้ว)
+   - [x] [#14](https://github.com/dinotong/Manga-Translator/issues/14) เอกสารเพี้ยนจากโค้ด — รวมกฎเหล็ก prefetch "≤ 1 req" ใน CLAUDE.md ที่ล้าหลัง D-027
 2. **คุณภาพคำแปล**
-   - [ ] [#2](https://github.com/dinotong/Manga-Translator/issues/2) map คำแปลตามตำแหน่ง ไม่ใช่ `id` — ผิดแล้วลง cache ถาวร
-   - [ ] [#5](https://github.com/dinotong/Manga-Translator/issues/5) เพดาน 24 crop/3 MB ไม่นับหน้าปัจจุบัน · **วิธีแก้ใน issue ใช้ไม่ได้** เพราะ `planBatch` รับหน้าแรกเสมอ → plan ทั้ง `[foreground, ...queue]`
-   - [ ] [#6](https://github.com/dinotong/Manga-Translator/issues/6) `reflow.ts` quadratic 2 จุด (regex + `lastBase`) · วัดได้ 1.8 วิ @64k · เข้าได้ทางคำตอบ Gemini เท่านั้น
+   - [x] [#2](https://github.com/dinotong/Manga-Translator/issues/2) map คำแปลตามตำแหน่ง ไม่ใช่ `id` — ผิดแล้วลง cache ถาวร
+   - [x] [#5](https://github.com/dinotong/Manga-Translator/issues/5) เพดาน 24 crop/3 MB ไม่นับหน้าปัจจุบัน · **วิธีแก้ใน issue ใช้ไม่ได้** เพราะ `planBatch` รับหน้าแรกเสมอ → plan ทั้ง `[foreground, ...queue]`
+   - [x] [#6](https://github.com/dinotong/Manga-Translator/issues/6) `reflow.ts` quadratic 2 จุด (regex + `lastBase`) · วัดได้ 1.8 วิ @64k · เข้าได้ทางคำตอบ Gemini เท่านั้น
 3. **CI / รีโป**
-   - [ ] [#7](https://github.com/dinotong/Manga-Translator/issues/7) Actions รัน `npm run check` · [#8](https://github.com/dinotong/Manga-Translator/issues/8) Dependabot · [#15](https://github.com/dinotong/Manga-Translator/issues/15) `SHA256SUMS` ใน release
+   - [x] [#7](https://github.com/dinotong/Manga-Translator/issues/7) Actions รัน `npm run check` · [#8](https://github.com/dinotong/Manga-Translator/issues/8) Dependabot · [#15](https://github.com/dinotong/Manga-Translator/issues/15) `SHA256SUMS` ใน release
 4. **งานใหญ่**
-   - [ ] [#4](https://github.com/dinotong/Manga-Translator/issues/4) `perSet` ถูกเขียนทับ + broadcast `SETTINGS_CHANGED` ทุกหน้า → แยก store แบบ `key-status.ts`
-   - [ ] [#11](https://github.com/dinotong/Manga-Translator/issues/11) key อยู่ใน content script · **ข้อเสนอใน issue ทำทีละครึ่งไม่ช่วย/ทำพัง** → `TRUSTED_CONTEXTS` + SW ส่ง settings ที่ตัด key ให้
-   - [ ] [#10](https://github.com/dinotong/Manga-Translator/issues/10) ไม่ตรวจ `sender` · เว็บส่ง message มาไม่ได้อยู่แล้ว (ไม่มี `externally_connectable`) · ช่องที่จริงกว่าคือ**เว็บเลือก URL ให้ SW fetch พร้อม cookie ได้** — จำกัด scheme
+   - [x] [#4](https://github.com/dinotong/Manga-Translator/issues/4) `perSet` ถูกเขียนทับ + broadcast `SETTINGS_CHANGED` ทุกหน้า → แยก store แบบ `key-status.ts`
+   - [x] [#11](https://github.com/dinotong/Manga-Translator/issues/11) key อยู่ใน content script · **ข้อเสนอใน issue ทำทีละครึ่งไม่ช่วย/ทำพัง** → `TRUSTED_CONTEXTS` + SW ส่ง settings ที่ตัด key ให้
+   - [x] [#10](https://github.com/dinotong/Manga-Translator/issues/10) ไม่ตรวจ `sender` · เว็บส่ง message มาไม่ได้อยู่แล้ว (ไม่มี `externally_connectable`) · ช่องที่จริงกว่าคือ**เว็บเลือก URL ให้ SW fetch พร้อม cookie ได้** — จำกัด scheme
 5. **เจ้าของกดใน Settings เอง**
-   - [ ] [#16](https://github.com/dinotong/Manga-Translator/issues/16) CodeQL default setup · Dependabot alerts + security updates
+   - [x] [#16](https://github.com/dinotong/Manga-Translator/issues/16) CodeQL default setup · Dependabot alerts + security updates
 
-ทุกข้อในกลุ่ม 2 และ 4 ต้องพิสูจน์บนเว็บจริงก่อนติ๊ก (กฎเหล็ก)
+**พิสูจน์บน Chrome จริงแล้ว 2026-10-14** (โปรไฟล์จริงของเจ้าของ · อัปเกรดจาก 1.0.2 ทับที่)
+- migration v7→v8: `perSet` 19 เรื่องย้ายไป `setLanguageMemory` ตรงทุกตัว · settings อื่น + key 3 ตัวไม่เปลี่ยน
+- Options: Diagnostics เขียวทั้งหมด · TEST_KEY · CACHE_STATS · message ผิดรูปถูกปฏิเสธ · หน้าเว็บไม่เห็น `chrome.storage`
+- MangaDex: แปลด้วยมือ 16 กล่อง (OCR hit + แปลใหม่ผ่าน `routeTranslations`) · เปลี่ยน settings แล้วแท็บเดิมแปลอัตโนมัติ 27 กล่องโดยไม่ reload
+- imhentai: SW fetch รูปผ่าน · ความจำภาษานับ 1→11, reread 0 · settings ไม่ถูกเขียนต่อหน้า · ย้อนหน้าเดิม (เส้นทางอัตโนมัติ, lookahead 0) = 0 request
+- ⚠️ ปุ่ม "แปลหน้านี้" **บังคับอ่านใหม่เสมอโดยตั้งใจ** — ห้ามใช้วัด cache hit
+- ยังไม่ได้วัด: เว็บที่ต้อง login (Edge profile) · เพดาน 24 crop บนเรื่องที่ข้อความแน่น (มีแค่ unit test)
+- Dependabot alert 18 ตัว (dev/harness เท่านั้น ไม่มีใน zip) → `npm audit fix` ทั้ง 2 แพ็กเกจ = 0
 
 ## สถานะ 2026-10-12 — อ่านตรงนี้ก่อน
 
