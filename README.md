@@ -153,4 +153,4 @@ cd extension && npm run zip                    # แพ็กเกจสำห�
 
 ## License
 
-Apache-2.0 — [extension/LICENSE](extension/LICENSE) · ไลบรารีและโมเดลที่ใช้พร้อมใบอนุญาตของแต่ละตัว: [extension/NOTICE](extension/NOTICE)
+Apache-2.0 — [LICENSE](LICENSE) · ไลบรารีและโมเดลที่ใช้พร้อมใบอนุญาตของแต่ละตัว: [extension/NOTICE](extension/NOTICE)
