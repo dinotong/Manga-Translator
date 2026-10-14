@@ -6,7 +6,7 @@ import type { LangCode } from '../types';
  * Replay a gallery, one page at a time, the way the pipeline does.
  *
  * `scripts` is what each page actually reads as. The working language carries
- * from page to page exactly as `Settings.perSet` carries it, and every re-read
+ * from page to page exactly as the per-set store carries it, and every re-read
  * is counted, because the cost of this bug was measured in requests.
  */
 function readGallery(scripts: readonly LangCode[], start: LangCode | null = null) {

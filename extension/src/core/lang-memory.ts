@@ -77,7 +77,7 @@ export const FLIP_MARGIN = 2;
 export const MAX_REREADS_PER_SET = 1;
 
 /**
- * The evidence a set has accumulated. Persisted in `Settings.perSet`.
+ * The evidence a set has accumulated. Persisted per set by shared/set-memory.ts.
  *
  * Both fields spell `| undefined` out rather than relying on `?` alone, because
  * the project builds with `exactOptionalPropertyTypes` and these are read

@@ -23,7 +23,12 @@ import type {
   SwToTab,
 } from '../shared/messages';
 import { PORT_NAME } from '../shared/messages';
-import { loadSettings, onSettingsChanged, type Settings } from '../shared/settings';
+import {
+  loadSettings,
+  migrateSettingsStorage,
+  onSettingsChanged,
+  type Settings,
+} from '../shared/settings';
 import { GeminiProvider } from '../translation/GeminiProvider';
 import { KeyRing } from '../translation/KeyRing';
 
@@ -145,6 +150,11 @@ export default defineBackground(() => {
       .catch((err: unknown) => sendResponse({ ok: false, ...toErrorPayload(err) } satisfies Response));
     return true;
   });
+
+  // Storage-shape migrations that hydrate() cannot do on its own (v7 -> v8:
+  // per-set memory moved to its own key). Idempotent and cheap once done, so
+  // every worker start runs it rather than trusting onInstalled to have fired.
+  void migrateSettingsStorage().catch((err: unknown) => log.warn('settings migration failed', err));
 
   void loadSettings().then((s) => {
     maxInFlight = clampInFlight(s.performance.maxConcurrentRequests);

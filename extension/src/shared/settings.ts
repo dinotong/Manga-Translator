@@ -13,7 +13,7 @@ import type { ApiKeyEntry } from '../core/quota';
 import type { PresetName } from '../core/resolution';
 import { normalizeSiteList } from '../core/site-scope';
 import type { SourceLang, TargetLang } from './lang';
-import type { LangCode } from '../types';
+import { absorbLegacySetMemory } from './set-memory';
 
 export type { ApiKeyEntry };
 
@@ -21,8 +21,7 @@ export type { ApiKeyEntry };
  * All persisted settings, in chrome.storage.local only.
  *
  * Not `sync`: the API key would then travel between the user's machines
- * automatically, and sync caps a single item at 8 KB, which `perSet` will
- * eventually exceed on its own.
+ * automatically, and sync caps a single item at 8 KB.
  */
 export interface Settings {
   /**
@@ -44,8 +43,12 @@ export interface Settings {
    *         balloons into one translation on the owner's page, so every stored
    *         `true` written before this version is the old default speaking, not
    *         a reader's decision, and is not worth honouring.
+   * 6 -> 7: the concurrency default moved, see `migrateMaxInFlight`.
+   * 7 -> 8: `perSet` moved out to its own storage key (shared/set-memory.ts),
+   *         because every job rewrote the whole map from a stale snapshot and
+   *         every write fanned out to every tab. See `migrateSettingsStorage`.
    */
-  version: 7;
+  version: 8;
 
   /**
    * The master kill switch, and the only thing here that is still global.
@@ -196,34 +199,10 @@ export interface Settings {
    * nothing about how big a page turns out to be.
    */
   cache: CacheLimits;
-
-  /**
-   * Remembered per gallery/series, so an auto-detected language is paid for once.
-   *
-   * `source` is the working language; the two fields under it are the evidence
-   * behind it. Keeping the evidence rather than only the verdict is what stops a
-   * gallery whose pages are genuinely mixed from overwriting its own memory on
-   * every page and buying a re-read each time — see core/lang-memory.ts.
-   *
-   * All optional, and absent on every record written before they existed, which
-   * is why they need no migration: an old record simply has no evidence yet and
-   * starts accumulating it on the next page read.
-   */
-  perSet: Record<
-    string,
-    {
-      source?: SourceLang;
-      enabled?: boolean;
-      /** Pages of this set that read as each script. */
-      langCounts?: Partial<Record<LangCode, number>>;
-      /** Re-reads already spent correcting this set's language. */
-      langRereads?: number;
-    }
-  >;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  version: 7,
+  version: 8,
   enabled: true,
   autoSites: [],
   lang: { source: 'ja', target: 'th' },
@@ -270,7 +249,6 @@ export const DEFAULT_SETTINGS: Settings = {
     maxConcurrentRequests: DEFAULT_MAX_IN_FLIGHT,
   },
   cache: { maxPages: DEFAULT_CACHE_PAGES, maxBytes: DEFAULT_CACHE_BYTES },
-  perSet: {},
 };
 
 const KEY = 'settings';
@@ -420,10 +398,14 @@ export function hydrate(stored: unknown): Settings {
   const d = DEFAULT_SETTINGS;
   const gemini = s.translation?.gemini as (Partial<Settings['translation']['gemini']> & LegacyGemini) | undefined;
   const display = s.display as (Partial<Settings['display']> & { boxOpacity?: unknown }) | undefined;
-  const next: Settings & { autoTranslate?: unknown; display: Settings['display'] & { boxOpacity?: unknown } } = {
+  const next: Settings & {
+    autoTranslate?: unknown;
+    perSet?: unknown;
+    display: Settings['display'] & { boxOpacity?: unknown };
+  } = {
     ...d,
     ...s,
-    version: 7,
+    version: 8,
     // Normalised on read, not only on write: this list decides which sites are
     // allowed to spend the reader's daily quota, so a hand-edited storage entry
     // must not be able to add a site under a spelling the popup cannot show.
@@ -467,14 +449,18 @@ export function hydrate(stored: unknown): Settings {
     // what keeps this setting from contradicting prefetchLookahead, so a
     // hand-edited storage entry must not be able to get underneath it.
     cache: normalizeCacheLimits(s.cache),
-    perSet: { ...d.perSet, ...s.perSet },
   };
   // The `...s` spreads above copy the dead v2 and v4 fields through. Deleting
   // them means the next write drops them from storage instead of leaving stale
   // values that look authoritative to anyone reading the record later — and, in
   // `boxOpacity`'s case, would silently re-run the migration over the reader's
   // new choices if the version were ever rolled back.
+  //
+  // `perSet` (v7 and earlier) is dropped the same way, but only ever after its
+  // contents were moved to shared/set-memory.ts — see `migrateSettingsStorage`
+  // and `saveSettings`, the two places that write a hydrated record.
   delete next.autoTranslate;
+  delete next.perSet;
   delete next.display.boxOpacity;
   return next;
 }
@@ -485,9 +471,35 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = hydrate({ ...(await loadSettings()), ...patch });
+  const raw = (await chrome.storage.local.get(KEY))[KEY];
+  // An Options page can save before the worker has migrated. Move the legacy
+  // per-set memory first, or this write would be the one that drops it.
+  await absorbLegacySetMemory(legacyPerSet(raw));
+  const next = hydrate({ ...hydrate(raw), ...patch });
   await chrome.storage.local.set({ [KEY]: next });
   return next;
+}
+
+/** The v7-and-earlier `perSet` map inside a raw stored record, if any. */
+export function legacyPerSet(raw: unknown): unknown {
+  return raw && typeof raw === 'object' ? (raw as { perSet?: unknown }).perSet : undefined;
+}
+
+/**
+ * v7 -> v8, the half `hydrate` cannot do: move `perSet` into its own key.
+ *
+ * `hydrate` is pure and reads one record, so it can drop the field but not put
+ * it anywhere. This does the move and then rewrites the record without it.
+ * Idempotent: once the stored record is v8 with no `perSet`, it writes nothing,
+ * so the worker can call it on every start.
+ */
+export async function migrateSettingsStorage(): Promise<void> {
+  const raw = (await chrome.storage.local.get(KEY))[KEY];
+  if (raw === undefined) return;
+  const legacy = legacyPerSet(raw);
+  if (legacy === undefined && Number((raw as { version?: unknown }).version) >= 8) return;
+  await absorbLegacySetMemory(legacy);
+  await chrome.storage.local.set({ [KEY]: hydrate(raw) });
 }
 
 /** Fires on any settings write, including from another extension page. */

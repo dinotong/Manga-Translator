@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PROFILE_HOSTS } from '../content/site-profiles';
 import {
   DEFAULT_CACHE_BYTES,
@@ -6,7 +6,8 @@ import {
   MIN_CACHE_PAGES,
 } from '../core/cache-budget';
 import { DEFAULT_MAX_IN_FLIGHT } from '../core/scheduling';
-import { DEFAULT_SETTINGS, hydrate } from './settings';
+import { loadSetMemory, mergeLegacySetMemory, SET_MEMORY_KEY } from './set-memory';
+import { DEFAULT_SETTINGS, hydrate, migrateSettingsStorage, saveSettings } from './settings';
 
 /**
  * The migration only ever runs once per installed copy, so a bug here is not
@@ -19,7 +20,7 @@ describe('hydrate — v1 to v2 key migration', () => {
       version: 1,
       translation: { gemini: { apiKey: 'AIza-real-key', model: 'gemini-flash-lite-latest' } },
     });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys).toHaveLength(1);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-real-key');
     expect(s.translation.gemini.model).toBe('gemini-flash-lite-latest');
@@ -94,7 +95,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 
   it('handles storage that is empty or garbage', () => {
     expect(hydrate(undefined).translation.gemini.keys).toEqual([]);
-    expect(hydrate(null).version).toBe(7);
+    expect(hydrate(null).version).toBe(8);
     expect(hydrate({ translation: { gemini: { keys: 'nope' } } }).translation.gemini.keys).toEqual([]);
   });
 });
@@ -108,7 +109,7 @@ describe('hydrate — v1 to v2 key migration', () => {
 describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => {
   it('keeps the sites auto-translate was aimed at, for someone who had it on', () => {
     const s = hydrate({ version: 2, autoTranslate: true });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.autoSites).toEqual([...PROFILE_HOSTS]);
     expect(s.autoSites).toContain('imhentai.xxx');
     expect(s.autoSites).toContain('mangadex.org');
@@ -163,7 +164,7 @@ describe('hydrate — v2 to v3, global autoTranslate to a per-site list', () => 
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('imhentai.xxx');
   });
@@ -189,10 +190,11 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       translation: { gemini: { keys: [{ id: 'a', label: 'หลัก', key: 'AIza-real' }] } },
       perSet: { 'imhentai.xxx/1474885': { source: 'ja' } },
     });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['imhentai.xxx', 'mangadex.org']);
-    expect(s.perSet['imhentai.xxx/1474885']).toEqual({ source: 'ja' });
+    // Moved out to shared/set-memory.ts by migrateSettingsStorage, not kept here.
+    expect((s as unknown as Record<string, unknown>).perSet).toBeUndefined();
   });
 
   it('gives a record written before the setting existed the defaults', () => {
@@ -227,7 +229,7 @@ describe('hydrate — v3 to v4, a cache budget the reader can set', () => {
       autoTranslate: true,
       translation: { gemini: { apiKey: 'AIza-x' } },
     });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.autoSites).toContain('mangadex.org');
     expect(s.cache.maxPages).toBe(DEFAULT_CACHE_PAGES);
@@ -259,13 +261,13 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
       display: { boxOpacity: 0.92, fontScale: 1.1, peekOnHover: false },
       perSet: { 'e-hentai.org/4118730': { source: 'ja' } },
     });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys).toEqual([{ id: 'a', label: 'หลัก', key: 'AIza-real' }]);
     expect(s.autoSites).toEqual(['e-hentai.org', 'nhentai.net']);
     expect(s.cache).toEqual({ maxPages: 60, maxBytes: 100 * 1024 * 1024 });
     expect(s.display.fontScale).toBe(1.1);
     expect(s.display.peekOnHover).toBe(false);
-    expect(s.perSet['e-hentai.org/4118730']).toEqual({ source: 'ja' });
+    expect((s as unknown as Record<string, unknown>).perSet).toBeUndefined();
   });
 
   it('drops the dead field so it cannot overwrite the new ones later', () => {
@@ -299,7 +301,7 @@ describe('hydrate — v4 to v5, one box opacity becomes a plate and a panel', ()
 
   it('takes a v1 all the way to the current version', () => {
     const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.display.plateOpacity).toBe(DEFAULT_SETTINGS.display.plateOpacity);
   });
@@ -368,8 +370,93 @@ describe('hydrate — v6 to v7, a concurrency budget that accounts for batching'
 
   it('carries a v1 through to the new budget along with every other migration', () => {
     const s = hydrate({ version: 1, translation: { gemini: { apiKey: 'AIza-x' } } });
-    expect(s.version).toBe(7);
+    expect(s.version).toBe(8);
     expect(s.translation.gemini.keys[0]?.key).toBe('AIza-x');
     expect(s.performance.maxConcurrentRequests).toBe(DEFAULT_MAX_IN_FLIGHT);
   });
 })
+
+/**
+ * The smallest chrome.storage.local that the v7 -> v8 move needs: get/set over a
+ * plain object. Only for this block — the move does I/O by nature, and it runs
+ * exactly once per installed copy.
+ */
+function stubStorage(initial: Record<string, unknown>): Record<string, unknown> {
+  const area: Record<string, unknown> = structuredClone(initial);
+  (globalThis as { chrome?: unknown }).chrome = {
+    storage: {
+      local: {
+        get: async (key: string) => (key in area ? { [key]: structuredClone(area[key]) } : {}),
+        set: async (items: Record<string, unknown>) => {
+          Object.assign(area, structuredClone(items));
+        },
+      },
+    },
+  };
+  return area;
+}
+
+describe('v7 to v8, per-set memory moves out of settings', () => {
+  const keys = [{ id: 'a', label: 'หลัก', key: 'AIza-real' }];
+  const perSet = {
+    'imhentai.xxx/1474885': { source: 'en', langCounts: { en: 3, ja: 1 }, langRereads: 1 },
+    'e-hentai.org/4118730': { source: 'ja' },
+  };
+
+  beforeEach(() => {
+    delete (globalThis as { chrome?: unknown }).chrome;
+  });
+  afterEach(() => {
+    delete (globalThis as { chrome?: unknown }).chrome;
+  });
+
+  it('moves every set into its own key and drops it from settings', async () => {
+    const area = stubStorage({
+      settings: { version: 7, autoSites: ['imhentai.xxx'], translation: { gemini: { keys } }, perSet },
+    });
+    await migrateSettingsStorage();
+    expect(area[SET_MEMORY_KEY]).toEqual(perSet);
+    const stored = area.settings as Record<string, unknown>;
+    expect(stored.perSet).toBeUndefined();
+    expect(stored.version).toBe(8);
+    expect((stored.translation as { gemini: { keys: unknown } }).gemini.keys).toEqual(keys);
+    expect(stored.autoSites).toEqual(['imhentai.xxx']);
+  });
+
+  it('does not overwrite evidence the new store already holds', async () => {
+    const newer = { source: 'ja', langCounts: { ja: 9 }, langRereads: 1 };
+    const area = stubStorage({
+      settings: { version: 7, perSet },
+      [SET_MEMORY_KEY]: { 'imhentai.xxx/1474885': newer },
+    });
+    await migrateSettingsStorage();
+    expect(await loadSetMemory()).toEqual({ ...perSet, 'imhentai.xxx/1474885': newer });
+    expect((area.settings as Record<string, unknown>).perSet).toBeUndefined();
+  });
+
+  it('is a no-op on a fresh install and on an already-migrated record', async () => {
+    const area = stubStorage({});
+    await migrateSettingsStorage();
+    expect(area).toEqual({});
+
+    const migrated = { ...DEFAULT_SETTINGS };
+    const area2 = stubStorage({ settings: migrated });
+    await migrateSettingsStorage();
+    expect(area2[SET_MEMORY_KEY]).toBeUndefined();
+    expect(area2.settings).toEqual(migrated);
+  });
+
+  it('a save from the Options page before the worker migrated does not lose the sets', async () => {
+    const area = stubStorage({ settings: { version: 7, perSet } });
+    await saveSettings({ enabled: false });
+    expect(area[SET_MEMORY_KEY]).toEqual(perSet);
+    expect((area.settings as Record<string, unknown>).perSet).toBeUndefined();
+    expect((area.settings as Record<string, unknown>).enabled).toBe(false);
+  });
+
+  it('merges by set, store first, and ignores garbage', () => {
+    expect(mergeLegacySetMemory(null, { a: { source: 'ja' } })).toEqual({ a: { source: 'ja' } });
+    expect(mergeLegacySetMemory([1, 2], {})).toEqual({});
+    expect(mergeLegacySetMemory({ a: 'x', b: { source: 'en' } }, {})).toEqual({ b: { source: 'en' } });
+  });
+});

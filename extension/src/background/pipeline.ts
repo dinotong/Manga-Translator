@@ -18,7 +18,8 @@ import { textHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
 import { resolveDetectionLang, type SourceLang, type TargetLang } from '../shared/lang';
 import type { JobSource, OverlayBlock, Stage } from '../shared/messages';
-import { saveSettings, type Settings } from '../shared/settings';
+import type { Settings } from '../shared/settings';
+import { loadSetRecord, updateSetRecord } from '../shared/set-memory';
 import type { LangCode } from '../types';
 import { KeyRing } from '../translation/KeyRing';
 import { fetchImage } from './image-fetch';
@@ -49,10 +50,13 @@ export async function runJob(
   settings: Settings,
   onProgress: (stage: Stage, detail?: string) => void,
   signal?: AbortSignal,
-  /** Internal: set on the one re-read allowed after `auto` learns it guessed wrong. */
-  reread = false,
+  /**
+   * Internal: set on the one re-read allowed after `auto` learns it guessed
+   * wrong, to the language the set has just learned.
+   */
+  rereadAs: SourceLang | null = null,
 ): Promise<JobOutcome> {
-  const from = effectiveSource(settings, source.setKey);
+  const from = rereadAs ?? (await effectiveSource(settings, source.setKey));
   const to = settings.lang.target;
   // Opt-in. See shared/settings.ts for what it cost when it was not.
   const grouping = settings.translation.modelGrouping;
@@ -239,7 +243,7 @@ export async function runJob(
   // The model has just handed back `src` for every crop, so the script is in
   // hand for the cost of reading it. See core/script.ts, D-038.
   const learned = await learnSource(settings, source.setKey, from, items);
-  if (learned.reread && !reread) {
+  if (learned.reread && !rereadAs) {
     log.info(`page reads as ${learned.reread}, not ${from} — re-running this page`);
     onProgress('detect', `ตรวจพบภาษา ${learned.reread} — อ่านใหม่รอบเดียว`);
     // Re-read rather than carry on. Everything downstream of detection was
@@ -248,17 +252,13 @@ export async function runJob(
     // revisit. Capped at one per gallery by core/lang-memory.ts — a set whose
     // pages are genuinely mixed can never buy a second one, however often the
     // script changes under it.
-    return runJob(source, learned.settings, onProgress, signal, true);
+    return runJob(source, settings, onProgress, signal, learned.reread);
   }
 
   // A first page read under `auto` is filed under the language the set has now
   // learned, or every later visit — which looks it up under that language —
   // would miss and pay for the whole page again. See core/lang-memory.ts.
-  const storeFrom = cacheSource(
-    from,
-    effectiveSource(learned.settings, source.setKey),
-    resolveDetectionLang,
-  );
+  const storeFrom = cacheSource(from, learned.working ?? from, resolveDetectionLang);
   const storeKey = storeFrom === from ? key : ocrKey(detectorId, gemini.recognizerId, storeFrom, acquired.hash);
 
   /* ---- 5. believe the model's grouping only where geometry agrees ---- */
@@ -464,9 +464,17 @@ async function translateCached(
  * that is asking to be told. Below that, what a previous page of this same set
  * turned out to be, and only then the raw setting.
  */
-function effectiveSource(settings: Settings, setKey: string | null): SourceLang {
+async function effectiveSource(settings: Settings, setKey: string | null): Promise<SourceLang> {
   if (settings.lang.source !== 'auto') return settings.lang.source;
-  return (setKey ? settings.perSet[setKey]?.source : undefined) ?? 'auto';
+  if (!setKey) return 'auto';
+  try {
+    // Read now rather than from a snapshot: another job of the same gallery
+    // may have taught the set its language since this one was queued.
+    return (await loadSetRecord(setKey))?.source ?? 'auto';
+  } catch (err) {
+    log.warn(`could not read set memory: ${String(err)}`);
+    return 'auto';
+  }
 }
 
 /**
@@ -474,12 +482,14 @@ function effectiveSource(settings: Settings, setKey: string | null): SourceLang 
  * and say whether this page should be thrown away and read again.
  *
  * The deciding is all in core/lang-memory.ts, which is pure and tested against a
- * gallery that oscillates. What lives here is only the I/O around it: pulling
- * the evidence out of settings, and writing the updated evidence back.
+ * gallery that oscillates. What lives here is only the I/O around it: reading
+ * the set's evidence and writing the updated evidence back — both inside one
+ * serialised read-modify-write of that set alone (shared/set-memory.ts), so the
+ * re-read cap is checked against what other jobs have already spent, not
+ * against whatever this job saw when it started.
  *
- * The returned settings carry the new working language, so the re-read runs
- * under it — and so does the rest of the gallery, whether or not a re-read was
- * bought.
+ * `working` is the set's language from now on, so the re-read runs under it —
+ * and so does the rest of the gallery, whether or not a re-read was bought.
  *
  * Only under `auto`. A reader who picked a language is not overruled by us,
  * whatever the page looks like; if they picked wrong, the fix is the setting
@@ -490,54 +500,48 @@ async function learnSource(
   setKey: string | null,
   used: SourceLang,
   items: readonly ({ src: string; out: string } | null)[],
-): Promise<{ settings: Settings; reread: LangCode | null }> {
-  const unchanged = { settings, reread: null };
+): Promise<{ working: SourceLang | null; reread: LangCode | null }> {
+  const unchanged = { working: null, reread: null };
   if (settings.lang.source !== 'auto' || !setKey) return unchanged;
   const detected = detectScript(items.map((i) => i?.src ?? '').join('\n'));
   if (!detected) return unchanged;
 
-  const memory = settings.perSet[setKey];
-  const incumbent = memory?.source && memory.source !== 'auto' ? memory.source : null;
-  const decision = observePage(
-    { counts: memory?.langCounts, rereads: memory?.langRereads },
-    incumbent,
-    detected,
-    // `used` is 'auto' on the very first page of a set, and resolveDetectionLang
-    // turns that into 'ja' for every geometric decision — so 'auto' and a
-    // detected 'ja' are the same processing and need no re-read.
-    resolveDetectionLang(used),
-  );
-
-  if (decision.working !== incumbent) {
-    log.info(
-      `set ${setKey} reads as ${decision.working} ` +
-        `(${Object.entries(decision.counts)
-          .map(([k, n]) => `${k}:${n}`)
-          .join(' ')})`,
-    );
-  }
-
-  const next = await rememberSet(settings, setKey, {
-    source: decision.working,
-    langCounts: decision.counts,
-    langRereads: decision.rereads,
-  });
-  return { settings: next, reread: decision.reread ? decision.working : null };
-}
-
-/** `settings` with this set's record patched, saved and returned. */
-async function rememberSet(
-  settings: Settings,
-  setKey: string,
-  patch: Settings['perSet'][string],
-): Promise<Settings> {
-  const perSet = { ...settings.perSet, [setKey]: { ...settings.perSet[setKey], ...patch } };
   try {
-    return await saveSettings({ perSet });
+    return await updateSetRecord(setKey, (memory) => {
+      const incumbent = memory?.source && memory.source !== 'auto' ? memory.source : null;
+      const decision = observePage(
+        { counts: memory?.langCounts, rereads: memory?.langRereads },
+        incumbent,
+        detected,
+        // `used` is 'auto' on the very first page of a set, and
+        // resolveDetectionLang turns that into 'ja' for every geometric
+        // decision — so 'auto' and a detected 'ja' are the same processing and
+        // need no re-read.
+        resolveDetectionLang(used),
+      );
+      if (decision.working !== incumbent) {
+        log.info(
+          `set ${setKey} reads as ${decision.working} ` +
+            `(${Object.entries(decision.counts)
+              .map(([k, n]) => `${k}:${n}`)
+              .join(' ')})`,
+        );
+      }
+      return {
+        record: {
+          ...memory,
+          source: decision.working,
+          langCounts: decision.counts,
+          langRereads: decision.rereads,
+        },
+        result: { working: decision.working, reread: decision.reread ? decision.working : null },
+      };
+    });
   } catch (err) {
     // Not fatal: the worst case is asking the same question again next page.
+    // No re-read either — one that cannot be recorded is one the cap cannot see.
     log.warn(`could not remember detected language: ${String(err)}`);
-    return { ...settings, perSet };
+    return unchanged;
   }
 }
 
