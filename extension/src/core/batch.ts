@@ -135,6 +135,25 @@ export function planBatch(
   return out;
 }
 
+/**
+ * How many queued pages may ride along with a page that must go now.
+ *
+ * The caps are per *request*, so the page that triggered the dispatch counts
+ * against them like any other. Planning the queue on its own with only the page
+ * cap reduced let a 23-crop foreground page take 24 crops of companions with it —
+ * 47 crops, exactly the outlier request MAX_CROPS_PER_REQUEST exists to prevent.
+ *
+ * The leading page is planned first, so `planBatch`'s always-admit-first rule is
+ * what guarantees it a seat whatever it costs; only the companions can be cut.
+ */
+export function planCompanions(
+  lead: BatchablePage,
+  queued: readonly BatchablePage[],
+  caps: BatchCaps = DEFAULT_CAPS,
+): number {
+  return Math.max(0, planBatch([lead, ...queued], caps).length - 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* Ids                                                                 */
 /* ------------------------------------------------------------------ */

@@ -1,7 +1,8 @@
 import {
-  DEFAULT_CAPS,
+  type BatchablePage,
   MAX_PAGES_PER_REQUEST,
   planBatch,
+  planCompanions,
   type RoutedGroup,
 } from '../core/batch';
 import { SPECULATIVE_ARRIVAL_GAP_MS } from '../core/prefetch';
@@ -213,13 +214,10 @@ export function readPageBatched(req: ReadRequest): Promise<PageRead> {
     if (!mayWait(req.kind)) {
       const queue = lanes.get(req.lane) ?? [];
       // The visible page leads; whatever was already waiting rides along, up to
-      // the cap. `planBatch` is asked about the tail only, so the visible page
-      // can never be the one squeezed out.
-      const companions = planBatch(
-        queue.map((w) => ({ id: w.jobId, crops: w.crops.length, bytes: w.bytes })),
-        { ...DEFAULT_CAPS, maxPages: MAX_PAGES_PER_REQUEST - 1 },
-      );
-      const take = queue.splice(0, companions.length);
+      // the caps — which the visible page counts against too. It is planned
+      // first, so it can never be the one squeezed out.
+      const companions = planCompanions(asPage(waiting), queue.map(asPage));
+      const take = queue.splice(0, companions);
       lanes.set(req.lane, queue);
       if (queue.length === 0) clearLingerTimer(req.lane);
       void dispatch(req.lane, [waiting, ...take]);
@@ -252,6 +250,11 @@ export function remainingLinger(oldestQueuedAt: number, now: number): number {
   return Math.max(0, BATCH_LINGER_MS - (now - oldestQueuedAt));
 }
 
+/** A waiting page, as far as packing is concerned. */
+function asPage(w: Waiting): BatchablePage {
+  return { id: w.jobId, crops: w.crops.length, bytes: w.bytes };
+}
+
 function clearLingerTimer(lane: string): void {
   const t = timers.get(lane);
   if (t !== undefined) clearTimeout(t);
@@ -262,7 +265,7 @@ function flush(lane: string): void {
   clearLingerTimer(lane);
   const queue = lanes.get(lane) ?? [];
   if (queue.length === 0) return;
-  const planned = planBatch(queue.map((w) => ({ id: w.jobId, crops: w.crops.length, bytes: w.bytes })));
+  const planned = planBatch(queue.map(asPage));
   const take = queue.splice(0, planned.length);
   lanes.set(lane, queue);
   if (queue.length > 0 && !timers.has(lane)) {

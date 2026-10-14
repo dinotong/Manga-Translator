@@ -6,6 +6,7 @@ import {
   pageHeader,
   parseCropId,
   planBatch,
+  planCompanions,
   routeGroups,
   routeItems,
   routeTranslations,
@@ -411,5 +412,31 @@ describe('routeTranslations', () => {
   it('joins layout breaks the same way the image path does', () => {
     const r = routeTranslations(sent.slice(0, 1), [reply('1', 'おはよう', 'สวัสดี\nครับ')]);
     expect(r.outs).toEqual(['สวัสดีครับ']);
+  });
+});
+
+describe('planCompanions', () => {
+  it('counts the leading page against the crop cap', () => {
+    // Was 47 crops in one request: the lead was never counted.
+    expect(planCompanions(page('fg', 23), [page('a', 23)])).toBe(0);
+  });
+
+  it('counts the leading page against the byte cap', () => {
+    const half = DEFAULT_CAPS.maxBytes / 2 + 1;
+    expect(planCompanions(page('fg', 1, half), [page('a', 1, half)])).toBe(0);
+  });
+
+  it('still takes companions that fit alongside the lead', () => {
+    expect(planCompanions(page('fg', 10), [page('a', 7), page('b', 7), page('c', 1)])).toBe(2);
+  });
+
+  it('respects the page cap including the lead', () => {
+    const queue = Array.from({ length: 10 }, (_, i) => page(`q${i}`, 1));
+    expect(planCompanions(page('fg', 1), queue)).toBe(MAX_PAGES_PER_REQUEST - 1);
+  });
+
+  it('never squeezes out the lead, however large it is', () => {
+    expect(planCompanions(page('fg', 100, DEFAULT_CAPS.maxBytes * 2), [page('a', 1)])).toBe(0);
+    expect(planCompanions(page('fg', 100), [])).toBe(0);
   });
 });
