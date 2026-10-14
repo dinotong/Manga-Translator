@@ -1,6 +1,6 @@
 import { computeContentBox } from '../../core/geometry';
 import type { OverlayBlock } from '../../shared/messages';
-import type { Settings } from '../../shared/settings';
+import type { PageSettings } from '../../shared/page-settings';
 import type { NormRect, Size } from '../../types';
 import { OVERLAY_CSS } from './styles';
 import { placePanels, settlePanels } from '../../core/panel-layout';
@@ -71,9 +71,9 @@ export class Overlay {
     this.dirty = true;
   });
   private dirty = true;
-  private settings: Settings;
+  private settings: PageSettings;
 
-  constructor(settings: Settings) {
+  constructor(settings: PageSettings) {
     this.settings = settings;
   }
 
@@ -142,7 +142,7 @@ export class Overlay {
    * every settings change, with no way out but closing the tab, and it is the
    * reason changing a setting appeared to break every open reader.
    */
-  updateSettings(settings: Settings): void {
+  updateSettings(settings: PageSettings): void {
     this.settings = settings;
     for (const { hash, target } of Array.from(this.mounted.values())) this.attach(target, hash);
   }

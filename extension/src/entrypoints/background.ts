@@ -23,6 +23,7 @@ import type {
   SwToTab,
 } from '../shared/messages';
 import { PORT_NAME } from '../shared/messages';
+import { pageSettingsFrom } from '../shared/page-settings';
 import {
   loadSettings,
   migrateSettingsStorage,
@@ -46,6 +47,14 @@ const MENU_ID = 'mt-translate-image';
  * Chrome restarts it constantly.
  */
 export default defineBackground(() => {
+  // Content scripts run in every page and have no business reading storage:
+  // it holds the reader's API keys. They get a redacted view by message
+  // instead (shared/page-settings.ts). Persistent and idempotent, so setting it
+  // on every worker start costs nothing and survives anything that reset it.
+  void chrome.storage.local
+    .setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+    .catch((err: unknown) => log.warn('could not restrict storage access', err));
+
   chrome.runtime.onInstalled.addListener(async () => {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
@@ -163,10 +172,11 @@ export default defineBackground(() => {
   onSettingsChanged((settings) => {
     maxInFlight = clampInFlight(settings.performance.maxConcurrentRequests);
     pumpJobs();
+    const msg: SwToTab = { t: 'SETTINGS_CHANGED', settings: pageSettingsFrom(settings) };
     void chrome.tabs.query({}).then((tabs) => {
       for (const tab of tabs) {
         if (tab.id === undefined) continue;
-        void chrome.tabs.sendMessage(tab.id, { t: 'SETTINGS_CHANGED' } satisfies SwToTab).catch(() => {
+        void chrome.tabs.sendMessage(tab.id, msg).catch(() => {
           /* no content script here */
         });
       }
@@ -270,6 +280,9 @@ async function handleRequest(req: Request): Promise<Response> {
   switch (req?.t) {
     case 'PING':
       return { ok: true, pong: true };
+
+    case 'GET_PAGE_SETTINGS':
+      return { ok: true, settings: pageSettingsFrom(await loadSettings()) };
 
     case 'PREWARM':
       await prewarm();

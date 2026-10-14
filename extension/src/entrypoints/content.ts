@@ -31,11 +31,13 @@ import {
   type ImageRef,
   type JobSource,
   PORT_NAME,
+  type Request,
+  type Response,
   type Stage,
   type SwToContent,
   type SwToTab,
 } from '../shared/messages';
-import { loadSettings, type Settings } from '../shared/settings';
+import type { PageSettings } from '../shared/page-settings';
 
 const log = makeLog('content');
 
@@ -59,7 +61,9 @@ export default defineContentScript({
   async main() {
     if (window.top !== window) return; // ad iframes are never manga pages
 
-    let settings = await loadSettings();
+    const initial = await fetchPageSettings();
+    if (!initial) return;
+    let settings: PageSettings = initial;
     const profile = profileFor(new URL(location.href));
     /**
      * The site this tab counts as, for the per-site auto-translate switch.
@@ -1218,27 +1222,33 @@ export default defineContentScript({
           }
         }
       } else if (msg?.t === 'SETTINGS_CHANGED') {
-        void loadSettings().then((next) => {
-          const wasOn = siteOn();
-          settings = next;
-          // Either switch going off stops everything here, including the
-          // overlays already drawn: the reader just said "not on this site",
-          // and leaving the last page's translation up is not what that means.
-          //
-          // Keyed on the *switch*, not on `auto()`. Being on a listing page is
-          // not the reader turning anything off — the observers stay up so that
-          // clicking through to a chapter starts working without a reload.
-          if (!siteOn()) {
-            stopObserving();
-            return;
-          }
-          overlay.updateSettings(next);
-          if (!wasOn) startObserving();
-          else rescan();
-        });
+        // The view travels with the message: this script has no storage access
+        // (see shared/page-settings.ts), and asking back would be a second
+        // round trip per tab for every settings change.
+        const next = msg.settings;
+        if (next) applySettings(next);
       }
       return false;
     });
+
+    function applySettings(next: PageSettings): void {
+      const wasOn = siteOn();
+      settings = next;
+      // Either switch going off stops everything here, including the
+      // overlays already drawn: the reader just said "not on this site",
+      // and leaving the last page's translation up is not what that means.
+      //
+      // Keyed on the *switch*, not on `auto()`. Being on a listing page is
+      // not the reader turning anything off — the observers stay up so that
+      // clicking through to a chapter starts working without a reload.
+      if (!siteOn()) {
+        stopObserving();
+        return;
+      }
+      overlay.updateSettings(next);
+      if (!wasOn) startObserving();
+      else rescan();
+    }
 
     function findBySrc(srcUrl: string | undefined): HTMLImageElement | null {
       if (!srcUrl) return null;
@@ -1305,4 +1315,28 @@ function stageLabel(stage: string): string {
       stage
     ] ?? stage
   );
+}
+
+/**
+ * The settings this tab may see, from the worker.
+ *
+ * Not chrome.storage: the worker restricts storage to trusted contexts, since it
+ * holds the reader's API keys and this script runs in every page. One retry,
+ * because the very first message after the worker was torn down can race its
+ * start-up; after that the tab simply stays inert, which is the safe failure.
+ */
+async function fetchPageSettings(): Promise<PageSettings | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = (await chrome.runtime.sendMessage({ t: 'GET_PAGE_SETTINGS' } satisfies Request)) as
+        | Response
+        | undefined;
+      if (res?.ok && 'settings' in res) return res.settings;
+    } catch (err) {
+      log.debug('settings request failed', err);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  log.warn('no settings from the worker; staying inactive in this tab');
+  return null;
 }

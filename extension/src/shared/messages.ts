@@ -1,6 +1,7 @@
 import type { Direction, NormRect, Size } from '../types';
 import type { ErrCode } from './errors';
 import type { SourceLang, TargetLang } from './lang';
+import type { PageSettings } from './page-settings';
 
 /**
  * The single source of truth for everything that crosses a context boundary.
@@ -159,12 +160,15 @@ export type Request =
   | { t: 'CACHE_STATS' }
   | { t: 'CACHE_CLEAR'; which: 'all' | 'ocr' | 'translation' }
   /** Popup asks the active tab to translate whatever is on screen. */
-  | { t: 'TRANSLATE_VISIBLE'; tabId: number };
+  | { t: 'TRANSLATE_VISIBLE'; tabId: number }
+  /** A content script asks for the redacted settings view it is allowed to see. */
+  | { t: 'GET_PAGE_SETTINGS' };
 
 export type Response =
   | { ok: true; pong: true }
   | { ok: true; lines: DiagnosticLine[] }
   | { ok: true; stats: CacheStats }
+  | { ok: true; settings: PageSettings }
   | { ok: true }
   | { ok: false; code: ErrCode; message: string; hint: string };
 
@@ -173,7 +177,8 @@ export type Response =
 export type SwToTab =
   | { t: 'CONTEXT_TRANSLATE'; srcUrl: string | undefined }
   | { t: 'TRANSLATE_VISIBLE' }
-  | { t: 'SETTINGS_CHANGED' };
+  /** Carries the new view, so the tab never has to read storage itself. */
+  | { t: 'SETTINGS_CHANGED'; settings: PageSettings };
 
 /* ---------- service worker <-> offscreen document ---------- */
 
