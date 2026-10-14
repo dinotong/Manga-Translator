@@ -1,0 +1,18 @@
+name: ขอฟีเจอร์ / ขอรองรับเว็บใหม่
+description: อยากให้ทำอะไรเพิ่ม หรืออยากให้รองรับเว็บไหน
+labels: [enhancement]
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: อยากได้อะไร
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: ใช้ทำอะไร / ตอนนี้ติดตรงไหน
+  - type: input
+    id: site
+    attributes:
+      label: เว็บที่เกี่ยวข้อง (ถ้าขอรองรับเว็บใหม่)

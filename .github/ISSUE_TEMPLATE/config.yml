@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: แจ้งช่องโหว่ความปลอดภัย (แบบลับ)
+    url: https://github.com/dinotong/Manga-Translator/security/advisories/new
+    about: เรื่องความปลอดภัยแจ้งที่นี่ จะเห็นแค่เจ้าของรีโปกับคนแจ้ง
