@@ -70,7 +70,7 @@ M7  Shareable Build          ← onboarding, diagnostics, แจกเพื่�
 
 ### งาน
 1. ตั้ง WXT + TypeScript strict + Biome + Vitest
-2. `manifest`: `host_permissions: ["<all_urls>"]`, `permissions: ["offscreen","storage","contextMenus","activeTab"]`, CSP `wasm-unsafe-eval`
+2. `manifest`: `host_permissions: ["<all_urls>"]`, `permissions: ["offscreen","storage","contextMenus"]`, CSP `wasm-unsafe-eval`
 3. `shared/messages.ts` + `shared/types.ts` — contract ครบก่อนเขียน logic
    ⚠️ **`from`/`to` เป็น `LangCode` ตั้งแต่บรรทัดแรก ห้าม hardcode `'ja'`/`'th'` ที่ไหนเลย**
    (ต้นทุนของ multi-language เกือบทั้งหมดอยู่ตรงนี้ — design §5.2.1)

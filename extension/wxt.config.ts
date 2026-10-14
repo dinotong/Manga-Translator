@@ -15,7 +15,7 @@ export default defineConfig({
     name: 'Manga Translator',
     description: 'แปลมังงะเป็นไทยบนหน้าเว็บโดยตรง — ตรวจกล่องข้อความในเครื่อง แปลด้วย Gemini',
     // version comes from package.json — one place to bump (docs/04-public-release-plan.md 1.5).
-    permissions: ['offscreen', 'storage', 'contextMenus', 'activeTab'],
+    permissions: ['offscreen', 'storage', 'contextMenus'],
     // Needed twice over: to fetch cross-origin CDN images past CORS (the only
     // way to read a tainted <img>), and to reach the Gemini endpoint from the
     // service worker.
