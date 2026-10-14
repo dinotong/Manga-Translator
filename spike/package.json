@@ -14,7 +14,7 @@
     "samples": "node fetch-samples.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
+    "@huggingface/transformers": "^4.3.1",
     "onnxruntime-web": "^1.27.0"
   },
   "devDependencies": {
