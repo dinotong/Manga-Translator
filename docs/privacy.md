@@ -40,6 +40,8 @@ API key ถูกเก็บแบบไม่เข้ารหัส ใค�
 
 แจ้งปัญหาหรือถามเรื่องความเป็นส่วนตัวได้ที่ [GitHub Issues ของโปรเจกต์](https://github.com/dinotong/Manga-Translator/issues) — กดปุ่ม "คัดลอกผล Diagnostics" ในหน้าตั้งค่าแล้ววางแนบมาด้วยจะช่วยได้มาก (API key ในผลนั้นถูกปิดไว้ เหลือให้เห็นแค่ 4 ตัวท้าย)
 
+ถ้าเป็น**ช่องโหว่ด้านความปลอดภัย** อย่าเปิด Issue สาธารณะ — แจ้งแบบส่วนตัวตาม [SECURITY.md](../SECURITY.md)
+
 ---
 
 ## English summary (for store listings)
