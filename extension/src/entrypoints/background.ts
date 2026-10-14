@@ -23,6 +23,13 @@ import type {
   SwToTab,
 } from '../shared/messages';
 import { PORT_NAME } from '../shared/messages';
+import {
+  type ExtensionIdentity,
+  isOwnContentScript,
+  mayRequest,
+  parsePortMessage,
+  parseRequest,
+} from '../shared/message-guards';
 import { pageSettingsFrom } from '../shared/page-settings';
 import {
   loadSettings,
@@ -80,10 +87,22 @@ export default defineBackground(() => {
 
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== PORT_NAME) return;
+    // Jobs come from content scripts in tabs. Anything else on this port name
+    // is not ours to serve.
+    if (!isOwnContentScript(port.sender, self())) {
+      log.warn('refused a job port from outside a content script');
+      port.disconnect();
+      return;
+    }
 
     const inflight = new Map<string, AbortController>();
 
-    port.onMessage.addListener((raw: ContentToSw) => {
+    port.onMessage.addListener((msg: unknown) => {
+      const raw: ContentToSw | null = parsePortMessage(msg);
+      if (!raw) {
+        log.warn('dropped a malformed job message');
+        return;
+      }
       if (raw.t === 'CANCEL') {
         inflight.get(raw.jobId)?.abort();
         return;
@@ -149,12 +168,30 @@ export default defineBackground(() => {
 
   /* ---------------- one-shot requests from popup / options ---------------- */
 
-  chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     // Offscreen traffic uses an envelope; ignore it here so the two routers do
     // not answer each other's messages.
     if ((raw as { __to?: string })?.__to) return false;
 
-    handleRequest(raw as Request)
+    const req = parseRequest(raw);
+    if (!req) {
+      sendResponse({
+        ok: false,
+        code: 'UNKNOWN',
+        message: `malformed or unknown request ${String((raw as { t?: unknown } | null)?.t)}`,
+        hint: '',
+      } satisfies Response);
+      return false;
+    }
+    // Admin requests — key tests, diagnostics, cache clearing, poking another
+    // tab — are for the extension's own pages. See shared/message-guards.ts.
+    if (!mayRequest(req, sender, self())) {
+      log.warn(`refused ${req.t} from ${sender.url ?? 'unknown sender'}`);
+      sendResponse({ ok: false, code: 'UNKNOWN', message: `${req.t} not allowed from here`, hint: '' } satisfies Response);
+      return false;
+    }
+
+    handleRequest(req)
       .then(sendResponse)
       .catch((err: unknown) => sendResponse({ ok: false, ...toErrorPayload(err) } satisfies Response));
     return true;
@@ -186,6 +223,10 @@ export default defineBackground(() => {
 });
 
 /* ---------------- helpers ---------------- */
+
+function self(): ExtensionIdentity {
+  return { id: chrome.runtime.id, origin: chrome.runtime.getURL('') };
+}
 
 /**
  * The worker's job scheduler.

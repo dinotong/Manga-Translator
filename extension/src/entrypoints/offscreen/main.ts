@@ -2,6 +2,7 @@ import type { PresetName } from '../../core/resolution';
 import { releaseBytes, takeBytes } from '../../shared/blob-bridge';
 import { toErrorPayload } from '../../shared/errors';
 import { makeLog } from '../../shared/log';
+import { isOffscreenCaller } from '../../shared/message-guards';
 import type { Caps, OffscreenReply, SwToOffscreen } from '../../shared/messages';
 import { DETECT_DEFAULTS, detectPage } from '../../offscreen/detect-page';
 import { modelSize, PPOCR_DET } from '../../offscreen/model-store';
@@ -52,11 +53,15 @@ async function getDetector(
 }
 
 chrome.runtime.onMessage.addListener(
-  (raw: unknown, _sender, sendResponse: (r: OffscreenReply) => void) => {
+  (raw: unknown, sender, sendResponse: (r: OffscreenReply) => void) => {
     // Every extension page receives every runtime message, so the envelope is
     // what stops the popup from trying to answer a detection request.
     const envelope = raw as { __to?: string; msg?: SwToOffscreen };
     if (envelope?.__to !== 'offscreen' || !envelope.msg) return false;
+    // Only the worker drives the detector; a content script never may.
+    if (!isOffscreenCaller(sender, { id: chrome.runtime.id, origin: chrome.runtime.getURL('') })) {
+      return false;
+    }
 
     handle(envelope.msg)
       .then(sendResponse)

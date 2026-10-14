@@ -1,6 +1,7 @@
 import { PipelineError } from '../shared/errors';
 import { imageHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
+import { isWorkerFetchable } from '../shared/message-guards';
 
 const log = makeLog('fetch');
 
@@ -20,10 +21,18 @@ const log = makeLog('fetch');
 export async function fetchImage(
   url: string,
 ): Promise<{ bytes: ArrayBuffer; hash: string; type: string }> {
+  // The URL comes from a content script, i.e. from inside a web page, and this
+  // fetch carries the reader's cookies past CORS. Never let it name anything
+  // but the web: no file:, no chrome:, no extension pages.
+  if (!isWorkerFetchable(url)) {
+    throw new PipelineError('ACQUIRE_FAILED', `refusing to fetch ${short(url)}: not http(s)`);
+  }
   let res: Response;
   try {
     res = await fetch(url, {
-      // Some readers gate images behind a login cookie.
+      // Some readers gate images behind a login cookie — e-hentai/exhentai and
+      // luscious are logged-in sites (docs/03-work-queue.md), and their profiles
+      // use this path. Kept for that; the scheme check above is what bounds it.
       credentials: 'include',
       cache: 'force-cache',
     });
