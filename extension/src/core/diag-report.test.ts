@@ -21,6 +21,11 @@ describe('redactSecrets', () => {
       'ใช้ได้ · โมเดล gemini-flash-lite-latest',
     );
   });
+
+  it('masks a key= value even when it is not a Google-shaped key', () => {
+    expect(redactSecrets('GET /v1?key=sk-abc123&alt=json')).toBe('GET /v1?key=…&alt=json');
+    expect(redactSecrets('api_key=secretvalue next')).toBe('api_key=… next');
+  });
 });
 
 describe('formatDiagnostics', () => {

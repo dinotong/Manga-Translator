@@ -28,8 +28,13 @@ export interface ReportMeta {
 /** Google API keys: "AIza" followed by 35 URL-safe characters. */
 const GOOGLE_KEY = /AIza[0-9A-Za-z_-]{35}/g;
 
+/** `key=...` / `api_key=...` query or assignment values, whatever the key looks like. */
+const KEY_PARAM = /((?:api[_-]?)?key=)(?!AIza…)[^\s&"'`]+/gi;
+
 export function redactSecrets(text: string): string {
-  return text.replace(GOOGLE_KEY, (k) => `AIza…${k.slice(-4)}`);
+  return text
+    .replace(GOOGLE_KEY, (k) => `AIza…${k.slice(-4)}`)
+    .replace(KEY_PARAM, (_m, head: string) => `${head}…`);
 }
 
 const MARK: Record<ReportLine['status'], string> = { ok: 'OK', warn: 'WARN', fail: 'FAIL' };

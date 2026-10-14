@@ -1,6 +1,5 @@
 import { bumpTrailingNumber } from '../core/page-url';
 import type { PublishedPage } from '../core/prefetch';
-import type { SourceLang } from '../shared/lang';
 
 /**
  * Per-site knowledge, isolated from everything else.
@@ -24,7 +23,6 @@ export interface SiteProfile {
    */
   acquire: 'auto' | 'content-script' | 'sw-fetch';
   reader: 'paged' | 'strip' | 'auto';
-  sourceLang?: SourceLang;
   /**
    * Is this URL a page being *read*, as opposed to a list of things to pick?
    *
@@ -193,7 +191,6 @@ const imhentai: SiteProfile = {
   reader: 'paged',
   // The site carries both Japanese and English galleries, so a fixed source
   // language here would be wrong half the time.
-  sourceLang: 'auto',
   // `/view/{id}/{n}/` is the reader. `/gallery/{id}/` is the *listing* for that
   // same gallery — the cover plus every page as a thumbnail — and the front
   // page and search results are listings too. This is worth stating explicitly
@@ -284,7 +281,6 @@ const luscious: SiteProfile = {
   reader: 'strip',
   // Both Japanese and English albums, so a fixed source language is wrong about
   // half the time.
-  sourceLang: 'auto',
   // `/albums/{slug}_{id}/read/` is the reader; `/albums/{slug}_{id}/` is that
   // album's own listing of thumbnails, and `/albums/list/…`, `/albums/new/…`,
   // `/hentai-manga/…` and the front page are all listings. Measured on the
@@ -365,7 +361,6 @@ const ehentai: SiteProfile = {
   acquire: 'sw-fetch',
   // MPV is a strip, /s/ is paged.
   reader: 'auto',
-  sourceLang: 'auto',
   // `/g/{gid}/{token}/` is the gallery listing, and the front page, `/tag/…`
   // and `/?f_search=` are listings too. Measured on `/g/`: zero images 400 px
   // or wider, because the thumbnails are CSS sprites rather than `<img>` — so
@@ -441,7 +436,6 @@ const nhentai: SiteProfile = {
   // i{n}.nhentai.net, cross-origin from nhentai.net.
   acquire: 'sw-fetch',
   reader: 'paged',
-  sourceLang: 'auto',
   // `/g/{id}/{n}/` is the reader; `/g/{id}/` is the cover-and-thumbnails
   // listing for the same gallery — measured, 21 images at 400 px or wider on
   // it, every one of them a thumbnail — and `/`, `/search/`, `/tag/…` and
