@@ -8,6 +8,7 @@ import {
   planBatch,
   routeGroups,
   routeItems,
+  routeTranslations,
 } from './batch';
 
 const page = (id: string, crops: number, bytes = 10_000) => ({ id, crops, bytes });
@@ -298,5 +299,117 @@ describe('routeGroups', () => {
 
   it('returns one empty list per page when the model proposes nothing', () => {
     expect(routeGroups([2, 3, 1], [])).toEqual([[], [], []]);
+  });
+});
+
+describe('routeTranslations', () => {
+  const sent = [
+    { id: '1', src: 'おはよう' },
+    { id: '2', src: 'ありがとう' },
+    { id: '3', src: 'さようなら' },
+  ];
+  const reply = (id: string, src: string, out: string) => ({ id, src, out });
+
+  it('places every answer when the reply is correct', () => {
+    const r = routeTranslations(sent, [
+      reply('1', 'おはよう', 'A'),
+      reply('2', 'ありがとう', 'B'),
+      reply('3', 'さようなら', 'C'),
+    ]);
+    expect(r).toEqual({ outs: ['A', 'B', 'C'], positional: false, unmatched: 0 });
+  });
+
+  it('leaves a dropped item empty instead of shifting the rest up', () => {
+    // Positional reading would put C on string 2 and nothing on string 3.
+    const r = routeTranslations(sent, [reply('1', 'おはよう', 'A'), reply('3', 'さようなら', 'C')]);
+    expect(r.outs).toEqual(['A', '', 'C']);
+    expect(r.unmatched).toBe(1);
+  });
+
+  it('follows the ids when two items come back swapped', () => {
+    const r = routeTranslations(sent, [
+      reply('2', 'ありがとう', 'B'),
+      reply('1', 'おはよう', 'A'),
+      reply('3', 'さようなら', 'C'),
+    ]);
+    expect(r.outs).toEqual(['A', 'B', 'C']);
+  });
+
+  it('ignores an extra item for an id that was never sent', () => {
+    const r = routeTranslations(sent, [
+      reply('1', 'おはよう', 'A'),
+      reply('2', 'ありがとう', 'B'),
+      reply('3', 'さようなら', 'C'),
+      reply('4', 'またね', 'D'),
+    ]);
+    expect(r.outs).toEqual(['A', 'B', 'C']);
+  });
+
+  it('refuses a duplicated id unless the echo settles which answer is right', () => {
+    const ambiguous = routeTranslations(sent, [
+      reply('1', 'おはよう', 'A'),
+      reply('1', 'おはよう', 'A2'),
+      reply('2', 'ありがとう', 'B'),
+      reply('3', 'さようなら', 'C'),
+    ]);
+    expect(ambiguous.outs).toEqual(['', 'B', 'C']);
+
+    const settled = routeTranslations(sent, [
+      reply('1', 'ありがとう', 'B?'),
+      reply('1', 'おはよう', 'A'),
+      reply('2', 'ありがとう', 'B'),
+      reply('3', 'さようなら', 'C'),
+    ]);
+    expect(settled.outs).toEqual(['A', 'B', 'C']);
+  });
+
+  it('refuses an answer whose echo is plainly another string', () => {
+    const r = routeTranslations(sent, [
+      reply('1', 'おはよう', 'A'),
+      reply('2', 'さようなら', 'C'),
+      reply('3', 'さようなら', 'C'),
+    ]);
+    expect(r.outs).toEqual(['A', '', 'C']);
+  });
+
+  it('forgives whitespace and compatibility forms in the echo, and a missing echo', () => {
+    const r = routeTranslations(
+      [{ id: '1', src: 'ＡＢＣ 123' }, { id: '2', src: 'x' }],
+      [{ id: '1', src: ' ABC123 ', out: 'ok' }, { id: '2', out: 'y' }],
+    );
+    expect(r.outs).toEqual(['ok', 'y']);
+  });
+
+  it('accepts a numeric id for a numeric scheme', () => {
+    const r = routeTranslations(sent.slice(0, 1), [{ id: 1, src: 'おはよう', out: 'A' }]);
+    expect(r.outs).toEqual(['A']);
+  });
+
+  it('falls back to position only when no item carries any id and counts match', () => {
+    const items = [
+      { src: 'おはよう', out: 'A' },
+      { src: 'ありがとう', out: 'B' },
+      { src: 'さようなら', out: 'C' },
+    ];
+    expect(routeTranslations(sent, items)).toEqual({ outs: ['A', 'B', 'C'], positional: true, unmatched: 0 });
+    // One short: no safe positional reading exists.
+    expect(routeTranslations(sent, items.slice(0, 2)).outs).toEqual(['', '', '']);
+    // Positional, but the echo still catches a reordering.
+    expect(routeTranslations(sent, [items[1]!, items[0]!, items[2]!]).outs).toEqual(['', '', 'C']);
+  });
+
+  it('never uses position once the model numbered its answers in its own scheme', () => {
+    const r = routeTranslations(sent, [
+      { id: 'a', out: 'A' },
+      { id: 'b', out: 'B' },
+      { id: 'c', out: 'C' },
+    ]);
+    expect(r.outs).toEqual(['', '', '']);
+    expect(r.positional).toBe(false);
+  });
+
+  it('joins layout breaks the same way the image path does', () => {
+    const r = routeTranslations(sent.slice(0, 1), [reply('1', 'おはよう', 'สวัสดี\nครับ')]);
+    expect(r.outs).toEqual(['สวัสดีครับ']);
   });
 });

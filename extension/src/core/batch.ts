@@ -284,6 +284,99 @@ export function routeItems(
 }
 
 /* ------------------------------------------------------------------ */
+/* Text-only translation: routing a reply back to the strings sent      */
+/* ------------------------------------------------------------------ */
+
+export interface TranslationsRouted {
+  /** One translation per string sent, in the order sent. `''` = no trustworthy answer. */
+  outs: string[];
+  /** The reply was placed by position because it carried no ids at all. */
+  positional: boolean;
+  /** Strings sent that got no trustworthy answer. */
+  unmatched: number;
+}
+
+/**
+ * Put each translated item back on the string it translates.
+ *
+ * The same rule as `routeItems`, for the path that sends already-read text
+ * instead of images: the reply is routed by the id each string was sent with,
+ * never by position. This path once trusted position on the grounds that it has
+ * no page boundary to cross, but the model is equally free to drop or reorder an
+ * item here, and one dropped item shifts every later translation onto the wrong
+ * string — which then lands in the translation cache shared by the whole series.
+ *
+ * Belt and braces: the prompt asks for each `src` echoed back unchanged, so an
+ * item whose echo is present and plainly a different string is refused even if
+ * its id matched. Whitespace and Unicode compatibility forms are forgiven; the
+ * point is to catch an answer for another bubble, not to grade the echo.
+ *
+ * An id answered more than once is ambiguous and yields nothing, unless the echo
+ * picks out exactly one of the answers. Position is accepted only when no item
+ * carried an id of any kind and the counts match exactly, and even then each
+ * echo is still checked.
+ *
+ * Nothing here is cached by itself; `''` is a signal to the caller that this
+ * string has no translation yet and must not be remembered as having one.
+ */
+export function routeTranslations(
+  sent: readonly { id: string; src: string }[],
+  items: readonly ReadItem[],
+): TranslationsRouted {
+  const echoOk = (item: ReadItem, src: string): boolean =>
+    typeof item.src !== 'string' || item.src.trim() === '' || sameText(item.src, src);
+  const out = (item: ReadItem): string =>
+    typeof item.out === 'string' ? joinLayoutBreaks(item.out) : '';
+
+  const idOf = (item: ReadItem): string | null => {
+    if (typeof item.id === 'string' && item.id.trim() !== '') return item.id.trim();
+    if (typeof item.id === 'number' && Number.isFinite(item.id)) return String(item.id);
+    return null;
+  };
+
+  const numbered = items.some((item) => idOf(item) !== null);
+  let positional = false;
+  let outs: string[];
+
+  if (numbered) {
+    const byId = new Map<string, ReadItem[]>();
+    for (const item of items) {
+      const id = idOf(item);
+      if (id === null) continue;
+      const list = byId.get(id) ?? [];
+      list.push(item);
+      byId.set(id, list);
+    }
+    outs = sent.map(({ id, src }) => {
+      const answers = (byId.get(id) ?? []).filter((item) => echoOk(item, src));
+      if (answers.length === 1) return out(answers[0]!);
+      if (answers.length > 1) {
+        // Duplicate id: only an answer whose echo actually matches can settle it.
+        const echoed = answers.filter((item) => typeof item.src === 'string' && sameText(item.src, src));
+        return echoed.length === 1 ? out(echoed[0]!) : '';
+      }
+      return '';
+    });
+  } else if (items.length === sent.length) {
+    positional = true;
+    outs = sent.map(({ src }, i) => {
+      const item = items[i]!;
+      return echoOk(item, src) ? out(item) : '';
+    });
+  } else {
+    outs = sent.map(() => '');
+  }
+
+  return { outs, positional, unmatched: outs.filter((o) => o === '').length };
+}
+
+/** Same text for the purpose of an echo check: compatibility forms and whitespace ignored. */
+function sameText(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize('NFKC').replace(/\s+/g, '');
+  return norm(a) === norm(b);
+}
+
+/* ------------------------------------------------------------------ */
 /* Groups: the model saying several crops are one continuous text        */
 /* ------------------------------------------------------------------ */
 

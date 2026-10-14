@@ -1,5 +1,4 @@
 import { deadline } from '../core/deadline';
-import { joinLayoutBreaks } from '../core/reflow';
 import {
   cropId,
   GROUP_INSTRUCTIONS,
@@ -8,6 +7,7 @@ import {
   type ReadItem,
   routeGroups,
   routeItems,
+  routeTranslations,
   type Routed,
   type RoutedGroup,
 } from '../core/batch';
@@ -305,9 +305,8 @@ export class GeminiProvider {
     const live = texts.map((t, i) => ({ i, t: t.trim() })).filter((x) => x.t.length > 0);
     if (live.length === 0) return texts.map(() => '');
 
-    const payload = JSON.stringify({
-      items: live.map((x, n) => ({ id: String(n + 1), src: x.t })),
-    });
+    const sent = live.map((x, n) => ({ id: String(n + 1), src: x.t }));
+    const payload = JSON.stringify({ items: sent });
 
     const { items } = await this.call(
       [
@@ -325,12 +324,18 @@ export class GeminiProvider {
       signal,
     );
 
-    // Positional, and safely so: this path sends one flat list of strings and
-    // gets one flat list back, with no page boundary anywhere to cross.
+    // By id, never by position: a dropped or reordered item would otherwise
+    // shift every later translation onto the wrong string. See core/batch.ts.
+    const routed = routeTranslations(sent, items);
+    if (routed.unmatched > 0 || routed.positional) {
+      log.warn(
+        `translateBatch: ${routed.unmatched}/${sent.length} unmatched` +
+          (routed.positional ? ' (placed by position)' : ''),
+      );
+    }
     const out = texts.map(() => '');
     live.forEach((x, n) => {
-      const got = items[n]?.out;
-      out[x.i] = typeof got === 'string' ? joinLayoutBreaks(got) : '';
+      out[x.i] = routed.outs[n] ?? '';
     });
     return out;
   }

@@ -431,16 +431,22 @@ async function translateCached(
       missing.map((m) => m.r.src),
       signal,
     );
+    // An empty answer means the model gave nothing trustworthy for that string
+    // (dropped, or answered for another one). It is shown as the source text for
+    // now and deliberately not cached: a cached '' would never be asked again.
+    const answered = missing
+      .map((m, n) => ({ m, out: (outs[n] ?? '').trim() }))
+      .filter(({ out }) => out.length > 0);
     await putTranslations(
-      missing.map((m, n) => ({
+      answered.map(({ m, out }) => ({
         key: keys[m.i]!,
         from,
         to,
         src: m.r.src,
-        out: outs[n] ?? '',
+        out,
       })),
     );
-    missing.forEach((m, n) => hits.set(keys[m.i]!, outs[n] ?? ''));
+    for (const { m, out } of answered) hits.set(keys[m.i]!, out);
   }
 
   return records.map((r, i) => ({
