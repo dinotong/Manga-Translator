@@ -50,6 +50,12 @@
 - **Gemini เปลี่ยนเงื่อนไข:** เราตั้งชื่อโมเดลเป็น `-latest` ไว้แล้ว แต่ถ้า Google ยุบ free tier ผู้ใช้ทุกคนจะใช้ไม่ได้พร้อมกัน — ต้องมีแผนสำรอง (Ollama ซึ่งเก็บ schema ไว้แล้ว)
 - **คุณภาพคำแปล:** ตอนนี้ไม่มีอะไรวัดเลย (คิวข้อ 1) — พอมีผู้ใช้หลายคน ทำปุ่ม "คำแปลนี้แปลก" ที่**บันทึกในเครื่อง**แล้วให้ผู้ใช้เลือกส่งเอง (ห้ามส่งอัตโนมัติ เพราะเราไม่มีเซิร์ฟเวอร์และไม่ควรเก็บข้อมูล)
 
+## วิธีออกรุ่น (release procedure)
+
+1. bump `version` ใน `extension/package.json` · อัปเดต `extension/CHANGELOG.md`
+2. `cd extension && npm run check && npm run zip` — `zip` สร้าง `.output/manga-translator-extension-<ver>-chrome.zip` แล้วรัน `scripts/checksums.mjs` เขียน `.output/SHA256SUMS` ต่อให้อัตโนมัติ
+3. สร้าง GitHub Release แล้วแนบ**ทั้ง zip และ `SHA256SUMS`** เป็น release asset — ผู้ใช้เช็คไฟล์ที่โหลดได้ด้วย `sha256sum -c SHA256SUMS` หรือ `Get-FileHash <zip>` (ยังไม่ทำ attestation)
+
 ## ลำดับที่เสนอ
 
 ```
