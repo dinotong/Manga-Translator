@@ -35,6 +35,7 @@ HetCreep เปิด [16 issue](https://github.com/dinotong/Manga-Translator/is
 - imhentai: SW fetch รูปผ่าน · ความจำภาษานับ 1→11, reread 0 · settings ไม่ถูกเขียนต่อหน้า · ย้อนหน้าเดิม (เส้นทางอัตโนมัติ, lookahead 0) = 0 request
 - ⚠️ ปุ่ม "แปลหน้านี้" **บังคับอ่านใหม่เสมอโดยตั้งใจ** — ห้ามใช้วัด cache hit
 - ยังไม่ได้วัด: เว็บที่ต้อง login (Edge profile) · เพดาน 24 crop บนเรื่องที่ข้อความแน่น (มีแค่ unit test)
+- onnxruntime-web 1.27→1.30 (#23): detector อย่างเดียวบน 19 sample — กล่อง 175→175 ตรงทุกพิกเซลทั้ง WebGPU/WASM · WebGPU 6.07→5.46 วิ · จำนวนข้อความบน overlay ต่างกันรอบละ (10 vs 13) มาจาก Gemini จัดกลุ่ม ไม่ใช่ detector
 - Dependabot alert 18 ตัว (dev/harness เท่านั้น ไม่มีใน zip) → `npm audit fix` ทั้ง 2 แพ็กเกจ = 0
 
 ## สถานะ 2026-10-12 — อ่านตรงนี้ก่อน
