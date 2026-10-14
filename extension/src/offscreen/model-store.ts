@@ -13,7 +13,7 @@ const log = makeLog('models');
  * Apache-2.0 data, so the package carries it (docs/04-public-release-plan.md
  * 1.2). Upstream: PaddleOCR PP-OCRv4 det, via
  * huggingface.co/SWHL/RapidOCR/resolve/main/PP-OCRv4/ch_PP-OCRv4_det_infer.onnx
- * sha256 d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9.
+ * The sha256 of that file is pinned in PPOCR_DET and verified at load.
  *
  * Swapping in PP-OCRv5 later is a new file plus a version bump on the id (which
  * is part of the OCR cache key, so stale results invalidate themselves).
@@ -25,6 +25,8 @@ export interface ModelSpec {
   path: string;
   /** Exact size. A truncated file shows up as "invalid protobuf" at load. */
   bytes: number;
+  /** Lowercase hex SHA-256 of the bundled file; checked at load. */
+  sha256: string;
   license: string;
 }
 
@@ -32,6 +34,7 @@ export const PPOCR_DET: ModelSpec = {
   id: 'ppocr-v4-det',
   path: '/models/ppocr-v4-det.onnx',
   bytes: 4_745_517,
+  sha256: 'd2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9',
   license: 'Apache-2.0',
 };
 
@@ -74,6 +77,14 @@ export async function loadModel(
     throw new PipelineError(
       'MODEL_LOAD_FAILED',
       `${spec.id}: got ${bytes.byteLength} bytes, expected ${spec.bytes} — the package is damaged, reinstall it`,
+    );
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const hex = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+  if (hex !== spec.sha256) {
+    throw new PipelineError(
+      'MODEL_LOAD_FAILED',
+      `${spec.id}: sha256 mismatch (got ${hex}) — the package is damaged, reinstall it`,
     );
   }
   log.info(`loaded ${spec.id} from package (${(spec.bytes / 1e6).toFixed(1)} MB, ${spec.license})`);
