@@ -18,7 +18,7 @@
   "dependencies": {
     "idb": "^8.0.3",
     "onnxruntime-web": "^1.27.0",
-    "preact": "^10.29.8"
+    "preact": "^11.0.1"
   },
   "devDependencies": {
     "@types/chrome": "^0.2.6",
