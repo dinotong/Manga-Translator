@@ -7,7 +7,7 @@
 
 > ภาพนี้คือหน้าตัวอย่างที่วาดขึ้นสำหรับโปรเจกต์นี้ ([extension/store-assets/](extension/store-assets/)) ไม่ใช่มังงะของใคร
 
-**รุ่นล่าสุด:** [v1.0.3 (เบต้า)](https://github.com/dinotong/Manga-Translator/releases/latest) · ใช้ได้กับ Chrome · Edge · Brave (116 ขึ้นไป) · ฟรีและโอเพนซอร์ส (Apache-2.0)
+**รุ่นล่าสุด:** [v1.0.4 (เบต้า)](https://github.com/dinotong/Manga-Translator/releases/latest) · ใช้ได้กับ Chrome · Edge · Brave (116 ขึ้นไป) · ฟรีและโอเพนซอร์ส (Apache-2.0)
 
 ---
 
