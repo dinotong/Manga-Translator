@@ -40,7 +40,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: spike/package-lock.json
+          cache-dependency-path: |
+            spike/package-lock.json
+            extension/package-lock.json
+      # The extension's tests run from here extend extension/.wxt/tsconfig.json,
+      # which only exists after the extension's own install (wxt prepare).
+      - run: npm ci
+        working-directory: extension
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
