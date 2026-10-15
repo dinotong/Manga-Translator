@@ -1155,27 +1155,24 @@ export default defineContentScript({
     }
 
     // A paged reader may change the URL without touching the DOM, and history
-    // methods fire no event of their own.
-    for (const name of ['pushState', 'replaceState'] as const) {
-      const original = history[name];
-      history[name] = function patched(this: History, ...args: Parameters<History['pushState']>) {
-        const out = original.apply(this, args);
-        dispatchEvent(new Event('mt:navigate'));
-        return out;
-      };
-    }
-    for (const evt of ['popstate', 'mt:navigate']) {
-      addEventListener(evt, () => {
-        revalidate();
-        // MangaDex goes from a title page to a chapter without ever reloading
-        // this script, so the reader/listing answer changes here and nowhere
-        // else. The prefetch timer follows it: guessing at the next page number
-        // while the reader is browsing covers is a request nobody asked for.
-        if (auto()) startPrefetch();
-        else stopPrefetch();
-        debounceRescan();
-      });
-    }
+    // methods fire no event of their own. Patching history.pushState cannot see
+    // them: this script runs in an isolated world whose `history` wrapper is
+    // not the one the page's router calls. The Navigation API's events are DOM
+    // events on the shared object, so they reach every world, and they cover
+    // push, replace and back/forward alike (Chrome 102+; we require 116).
+    const onNavigate = (): void => {
+      revalidate();
+      // MangaDex goes from a title page to a chapter without ever reloading
+      // this script, so the reader/listing answer changes here and nowhere
+      // else. The prefetch timer follows it: guessing at the next page number
+      // while the reader is browsing covers is a request nobody asked for.
+      if (auto()) startPrefetch();
+      else stopPrefetch();
+      debounceRescan();
+    };
+    const nav = (globalThis as { navigation?: EventTarget }).navigation;
+    if (nav) nav.addEventListener('currententrychange', onNavigate);
+    else addEventListener('popstate', onNavigate);
 
     /**
      * Check the one invariant that matters: every drawn translation belongs to
