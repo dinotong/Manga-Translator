@@ -137,7 +137,10 @@ export async function runJob(
   /* ---- 3. detect (offscreen) ---- */
   onProgress('detect');
   const detectBegan = Date.now();
-  const parked = await putBytes(acquired.hash, acquired.bytes, acquired.type);
+  // Keyed per job, not by image hash: two jobs on the same image (a prefetch
+  // and the foreground, or two tabs) would otherwise share one entry, and the
+  // first to finish would delete it from under the second.
+  const parked = await putBytes(`${acquired.hash}-${crypto.randomUUID()}`, acquired.bytes, acquired.type);
 
   let detect;
   try {
@@ -177,12 +180,14 @@ export async function runJob(
 
   /* ---- 4. read + translate in one request ---- */
   onProgress('translate', `${detect.blocks.length} กล่อง`);
-  const crops = await Promise.all(detect.blocks.map((b) => takeBytes(b.cropRef)));
-
   let items: ({ src: string; out: string } | null)[];
   let proposed: RoutedGroup[] = [];
   const readBegan = Date.now();
+  let crops: ArrayBuffer[] = [];
   try {
+    // Inside the try so a failed read still reaches the finally that releases
+    // every parked crop, not only the ones before the failure.
+    crops = await Promise.all(detect.blocks.map((b) => takeBytes(b.cropRef)));
     // Through the batcher: crops from up to three pages travel in one request,
     // which triples throughput without spending any more of the per-minute
     // budget. The page the reader is reading is dispatched immediately and never

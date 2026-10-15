@@ -3,7 +3,7 @@ import { blockGlyph } from '../core/direction';
 import { padRect, toNorm } from '../core/geometry';
 import { groupLinesIntoBlocks, readingOrder } from '../core/grouping';
 import { type PresetName, PRESETS, planResolution, resolutionWarning } from '../core/resolution';
-import { putBytes } from '../shared/blob-bridge';
+import { putBytes, releaseBytes } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { resolveDetectionLang, type SourceLang } from '../shared/lang';
 import type { DetectedBlock, DetectResult } from '../shared/messages';
@@ -54,79 +54,97 @@ export async function detectPage(
   // Two bitmaps: a small one to find text on, a larger one to crop from. When
   // the source is already small, fitLongEdge clamps both to native and the
   // second createImageBitmap is nearly free.
-  const [detBitmap, recBitmap] = await Promise.all([
-    createImageBitmap(original, { resizeWidth: plan.det.w, resizeQuality: 'high' }),
-    createImageBitmap(original, { resizeWidth: plan.rec.w, resizeQuality: 'high' }),
-  ]);
-  original.close();
-  const tDecode = performance.now() - t0;
-
-  const t1 = performance.now();
-  const lines = await detector.detect(detBitmap, resolveDetectionLang(options.lang));
-  const tDetect = performance.now() - t1;
-
-  const t2 = performance.now();
-  const blocks = readingOrder(
-    groupLinesIntoBlocks(lines, resolveDetectionLang(options.lang)),
-    options.rtl,
-  );
-  const tGroup = performance.now() - t2;
-
-  const detToRec = plan.rec.w / plan.det.w;
+  //
+  // Every bitmap is a decoded page of tens of MB, so each is closed on the way
+  // out whether or not the steps after it succeed. So are the crops already
+  // parked for the worker when a later block fails: nobody will take them.
+  let heldDet: ImageBitmap | undefined;
+  let heldRec: ImageBitmap | undefined;
   const out: DetectedBlock[] = [];
+  let ok = false;
+  try {
+    const [det, rec] = await Promise.allSettled([
+      createImageBitmap(original, { resizeWidth: plan.det.w, resizeQuality: 'high' }),
+      createImageBitmap(original, { resizeWidth: plan.rec.w, resizeQuality: 'high' }),
+    ]);
+    if (det.status === 'fulfilled') heldDet = det.value;
+    if (rec.status === 'fulfilled') heldRec = rec.value;
+    if (det.status === 'rejected') throw det.reason;
+    if (rec.status === 'rejected') throw rec.reason;
+    const detBitmap = det.value;
+    const recBitmap = rec.value;
+    original.close();
+    const tDecode = performance.now() - t0;
 
-  for (const block of blocks) {
-    const scaled = {
-      x: block.rect.x * detToRec,
-      y: block.rect.y * detToRec,
-      w: block.rect.w * detToRec,
-      h: block.rect.h * detToRec,
-    };
-    const padded = padRect(scaled, options.cropPadRatio, plan.rec);
-    const crop = await createImageBitmap(
-      recBitmap,
-      Math.round(padded.x),
-      Math.round(padded.y),
-      Math.max(1, Math.round(padded.w)),
-      Math.max(1, Math.round(padded.h)),
+    const t1 = performance.now();
+    const lines = await detector.detect(detBitmap, resolveDetectionLang(options.lang));
+    const tDetect = performance.now() - t1;
+
+    const t2 = performance.now();
+    const blocks = readingOrder(
+      groupLinesIntoBlocks(lines, resolveDetectionLang(options.lang)),
+      options.rtl,
     );
+    const tGroup = performance.now() - t2;
 
-    try {
-      // Blank crops are filtered before anything leaves the machine. A vision
-      // API charges for them, and a local recogniser would invent a fluent,
-      // entirely wrong sentence rather than admit the crop was empty.
-      if (!isInky(crop, options.minInkRatio)) continue;
+    const detToRec = plan.rec.w / plan.det.w;
 
-      const webp = await encodeWebp(crop);
-      const ref = await putBytes(`crop-${crypto.randomUUID()}`, webp, 'image/webp');
-      out.push({
-        rect: toNorm(block.rect, plan.det),
-        direction: block.direction,
-        score: block.score,
-        // Divided by the detection width, not the height, so it is in the same
-        // units as a normalized x — which is the space core/ compares lengths
-        // in. The lines are dropped from here on, so this is the last chance to
-        // measure it.
-        glyph: blockGlyph(block.lines, block.direction) / plan.det.w,
-        cropRef: ref,
-      });
-    } finally {
-      crop.close();
+    for (const block of blocks) {
+      const scaled = {
+        x: block.rect.x * detToRec,
+        y: block.rect.y * detToRec,
+        w: block.rect.w * detToRec,
+        h: block.rect.h * detToRec,
+      };
+      const padded = padRect(scaled, options.cropPadRatio, plan.rec);
+      const crop = await createImageBitmap(
+        recBitmap,
+        Math.round(padded.x),
+        Math.round(padded.y),
+        Math.max(1, Math.round(padded.w)),
+        Math.max(1, Math.round(padded.h)),
+      );
+
+      try {
+        // Blank crops are filtered before anything leaves the machine. A vision
+        // API charges for them, and a local recogniser would invent a fluent,
+        // entirely wrong sentence rather than admit the crop was empty.
+        if (!isInky(crop, options.minInkRatio)) continue;
+
+        const webp = await encodeWebp(crop);
+        const ref = await putBytes(`crop-${crypto.randomUUID()}`, webp, 'image/webp');
+        out.push({
+          rect: toNorm(block.rect, plan.det),
+          direction: block.direction,
+          score: block.score,
+          // Divided by the detection width, not the height, so it is in the same
+          // units as a normalized x — which is the space core/ compares lengths
+          // in. The lines are dropped from here on, so this is the last chance to
+          // measure it.
+          glyph: blockGlyph(block.lines, block.direction) / plan.det.w,
+          cropRef: ref,
+        });
+      } finally {
+        crop.close();
+      }
     }
+
+    ok = true;
+    return {
+      natural,
+      detSize: plan.det,
+      blocks: out,
+      detectorId: `${detector.id}@${detector.version}`,
+      backend: detector.backend,
+      warning: resolutionWarning(plan.det),
+      ms: { decode: tDecode, detect: tDetect, group: tGroup },
+    };
+  } finally {
+    original.close();
+    heldDet?.close();
+    heldRec?.close();
+    if (!ok) await Promise.all(out.map((b) => releaseBytes(b.cropRef)));
   }
-
-  detBitmap.close();
-  recBitmap.close();
-
-  return {
-    natural,
-    detSize: plan.det,
-    blocks: out,
-    detectorId: `${detector.id}@${detector.version}`,
-    backend: detector.backend,
-    warning: resolutionWarning(plan.det),
-    ms: { decode: tDecode, detect: tDetect, group: tGroup },
-  };
 }
 
 /** Is there enough ink here to be text at all? */

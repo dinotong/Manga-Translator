@@ -36,6 +36,20 @@ function touchIdle(): void {
   }, IDLE_CLOSE_MS);
 }
 
+/**
+ * Choosing, replacing and using the detector happen one at a time. The worker
+ * already serialises detections, but a prewarm (sent when settings change) can
+ * arrive mid-detection, and swapping the runtime then would dispose the session
+ * that detection is running on.
+ */
+let detectorChain: Promise<unknown> = Promise.resolve();
+
+function withDetector<T>(task: () => Promise<T>): Promise<T> {
+  const next = detectorChain.then(task, task);
+  detectorChain = next.catch(() => undefined);
+  return next;
+}
+
 async function getDetector(
   runtime: 'auto' | 'webgpu' | 'wasm',
   dilateRatio: number,
@@ -75,11 +89,13 @@ async function handle(msg: SwToOffscreen): Promise<OffscreenReply> {
 
   switch (msg.t) {
     case 'OFF_PREWARM': {
-      const det = await getDetector(msg.runtime, msg.dilateRatio);
-      const t0 = performance.now();
-      await det.prewarm();
-      log.info(`prewarmed on ${det.backend} in ${Math.round(performance.now() - t0)} ms`);
-      return { ok: true };
+      return withDetector(async () => {
+        const det = await getDetector(msg.runtime, msg.dilateRatio);
+        const t0 = performance.now();
+        await det.prewarm();
+        log.info(`prewarmed on ${det.backend} in ${Math.round(performance.now() - t0)} ms`);
+        return { ok: true } as const;
+      });
     }
 
     case 'OFF_CAPS': {
@@ -87,15 +103,16 @@ async function handle(msg: SwToOffscreen): Promise<OffscreenReply> {
     }
 
     case 'OFF_DETECT': {
-      const det = await getDetector(msg.runtime, msg.dilateRatio);
-      const bytes = await takeBytes(msg.image);
       try {
-        const result = await detectPage(bytes, det, {
-          ...DETECT_DEFAULTS,
-          preset: msg.preset as PresetName,
-          rtl: msg.rtl,
-          lang: msg.lang,
-        });
+        const bytes = await takeBytes(msg.image);
+        const result = await withDetector(async () =>
+          detectPage(bytes, await getDetector(msg.runtime, msg.dilateRatio), {
+            ...DETECT_DEFAULTS,
+            preset: msg.preset as PresetName,
+            rtl: msg.rtl,
+            lang: msg.lang,
+          }),
+        );
         log.debug(
           `${msg.jobId}: ${result.blocks.length} blocks · decode ${Math.round(result.ms.decode)}ms · detect ${Math.round(result.ms.detect)}ms (${result.backend})`,
         );
