@@ -13,7 +13,7 @@ import {
 } from '../core/quota';
 import { DEFAULT_LIMIT, pickPaced } from '../core/rate-limit';
 import { PipelineError } from '../shared/errors';
-import { loadKeyStatuses, saveKeyStatuses, tidyKeyStatuses } from '../shared/key-status';
+import { tidyKeyStatuses, updateKeyStatuses } from '../shared/key-status';
 import { makeLog } from '../shared/log';
 import { loadRates, ratesNow, reserve } from '../shared/rate-record';
 import type { Settings } from '../shared/settings';
@@ -294,8 +294,7 @@ export class KeyRing {
   private async mark(fn: (s: KeyStatuses) => KeyStatuses): Promise<void> {
     // Re-read before writing: the worker may have been restarted, and another
     // job may have learned something about a different key in the meantime.
-    this.statuses = fn(await loadKeyStatuses());
-    await saveKeyStatuses(this.statuses);
+    this.statuses = await updateKeyStatuses(fn);
   }
 
   /**

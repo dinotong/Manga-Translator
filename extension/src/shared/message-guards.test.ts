@@ -48,6 +48,7 @@ describe('mayRequest', () => {
   const admin = [
     { t: 'TEST_KEY', apiKey: 'k', model: 'm' },
     { t: 'CACHE_CLEAR', which: 'all' },
+    { t: 'CLEAR_KEY_STATUS', id: 'k' },
     { t: 'DIAGNOSE' },
     { t: 'TRANSLATE_VISIBLE', tabId: 1 },
     { t: 'PREWARM' },
@@ -88,6 +89,8 @@ describe('parseRequest', () => {
     expect(parseRequest({ t: 'TRANSLATE_VISIBLE', tabId: 1.5 })).toBeNull();
     expect(parseRequest({ t: 'CACHE_CLEAR', which: 'everything' })).toBeNull();
     expect(parseRequest({ t: 'TEST_KEY', apiKey: 1, model: 'b' })).toBeNull();
+    expect(parseRequest({ t: 'CLEAR_KEY_STATUS', id: '' })).toBeNull();
+    expect(parseRequest({ t: 'CLEAR_KEY_STATUS', id: 3 })).toBeNull();
     expect(parseRequest({ t: 'SET_SETTINGS' })).toBeNull();
     expect(parseRequest(null)).toBeNull();
     expect(parseRequest('PING')).toBeNull();

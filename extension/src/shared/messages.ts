@@ -159,6 +159,8 @@ export type Request =
   | { t: 'TEST_KEY'; apiKey: string; model: string }
   | { t: 'CACHE_STATS' }
   | { t: 'CACHE_CLEAR'; which: 'all' | 'ocr' | 'translation' }
+  /** Options page forgets what was recorded about one key; the worker does the write. */
+  | { t: 'CLEAR_KEY_STATUS'; id: string }
   /** Popup asks the active tab to translate whatever is on screen. */
   | { t: 'TRANSLATE_VISIBLE'; tabId: number }
   /** A content script asks for the redacted settings view it is allowed to see. */

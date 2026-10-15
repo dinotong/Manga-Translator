@@ -8,7 +8,7 @@ import type { ContentToSw, JobSource, Request } from './messages';
  * lives in every tab the browser opens. Such a script may ask for the redacted
  * page settings and run jobs for its own tab; everything that spends quota on
  * the reader's behalf outside a page, reads diagnostics or changes state
- * (TEST_KEY, CACHE_CLEAR, DIAGNOSE, TRANSLATE_VISIBLE, ...) is for the
+ * (TEST_KEY, CACHE_CLEAR, CLEAR_KEY_STATUS, DIAGNOSE, TRANSLATE_VISIBLE, ...) is for the
  * extension's own pages only.
  *
  * Pure, so the rules are tested without a browser. The structural sender type
@@ -159,6 +159,8 @@ export function parseRequest(raw: unknown): Request | null {
       return CACHE_WHICH.has(raw.which)
         ? { t: 'CACHE_CLEAR', which: raw.which as 'all' | 'ocr' | 'translation' }
         : null;
+    case 'CLEAR_KEY_STATUS':
+      return isStr(raw.id) && raw.id !== '' ? { t: 'CLEAR_KEY_STATUS', id: raw.id } : null;
     case 'TRANSLATE_VISIBLE':
       return isTabId(raw.tabId) ? { t: 'TRANSLATE_VISIBLE', tabId: raw.tabId } : null;
     default:

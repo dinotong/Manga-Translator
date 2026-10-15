@@ -26,24 +26,38 @@ export async function saveKeyStatuses(next: KeyStatuses): Promise<void> {
   await chrome.storage.local.set({ [KEY]: next });
 }
 
-/** Read-modify-write. Not atomic across contexts, but only the worker writes. */
-export async function updateKeyStatuses(
-  fn: (current: KeyStatuses) => KeyStatuses,
-): Promise<KeyStatuses> {
-  const next = fn(await loadKeyStatuses());
-  await saveKeyStatuses(next);
+/**
+ * Every read-modify-write queues here. Jobs run concurrently in the worker, so
+ * without the queue one job could read the statuses, another mark a key spent,
+ * and the first write its stale copy back over that mark. The queue is per
+ * context, which is why only the worker writes: the Options page asks it to
+ * (CLEAR_KEY_STATUS) instead of writing itself.
+ */
+let chain: Promise<unknown> = Promise.resolve();
+
+function serially<T>(task: () => Promise<T>): Promise<T> {
+  const next = chain.then(task, task);
+  chain = next.catch(() => undefined);
   return next;
 }
 
+/** Read-modify-write against fresh state, queued behind every other write. */
+export function updateKeyStatuses(fn: (current: KeyStatuses) => KeyStatuses): Promise<KeyStatuses> {
+  return serially(async () => {
+    const next = fn(await loadKeyStatuses());
+    await saveKeyStatuses(next);
+    return next;
+  });
+}
+
 /** Drop what has expired or belongs to a deleted key. Safe to call on every load. */
-export async function tidyKeyStatuses(
-  keys: readonly ApiKeyEntry[],
-  now = Date.now(),
-): Promise<KeyStatuses> {
-  const current = await loadKeyStatuses();
-  const next = pruneStatuses(current, keys, now);
-  if (JSON.stringify(next) !== JSON.stringify(current)) await saveKeyStatuses(next);
-  return next;
+export function tidyKeyStatuses(keys: readonly ApiKeyEntry[], now = Date.now()): Promise<KeyStatuses> {
+  return serially(async () => {
+    const current = await loadKeyStatuses();
+    const next = pruneStatuses(current, keys, now);
+    if (JSON.stringify(next) !== JSON.stringify(current)) await saveKeyStatuses(next);
+    return next;
+  });
 }
 
 export function onKeyStatusesChanged(cb: (s: KeyStatuses) => void): () => void {

@@ -32,6 +32,15 @@ describe('deadline', () => {
     expect(d.expired()).toBe(false);
   });
 
+  it('stays a timeout when the caller cancels after it fired', () => {
+    const caller = new AbortController();
+    const d = deadline(1000, caller.signal);
+    vi.advanceTimersByTime(1000);
+    caller.abort();
+    expect(d.signal.aborted).toBe(true);
+    expect(d.expired()).toBe(true);
+  });
+
   it('never fires once cleared', () => {
     const d = deadline(1000);
     d.clear();

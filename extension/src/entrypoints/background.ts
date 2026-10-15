@@ -2,7 +2,7 @@ import { defineBackground } from 'wxt/utils/define-background';
 import { cacheStats, clearCache } from '../cache/stores';
 import { runJob } from '../background/pipeline';
 import { callOffscreen, ensureOffscreen } from '../background/offscreen-manager';
-import { keyFingerprint, keyReport, type KeyState, nextQuotaResetAt } from '../core/quota';
+import { keyFingerprint, keyReport, type KeyState, nextQuotaResetAt, withCleared } from '../core/quota';
 import {
   clampInFlight,
   DEFAULT_MAX_IN_FLIGHT,
@@ -13,7 +13,7 @@ import {
 import { BYTES_PER_MB } from '../core/cache-budget';
 import { clearTransfers } from '../shared/blob-bridge';
 import { HINTS_TH, toErrorPayload } from '../shared/errors';
-import { tidyKeyStatuses } from '../shared/key-status';
+import { tidyKeyStatuses, updateKeyStatuses } from '../shared/key-status';
 import { makeLog } from '../shared/log';
 import type {
   ContentToSw,
@@ -358,6 +358,12 @@ async function handleRequest(req: Request): Promise<Response> {
 
     case 'CACHE_CLEAR':
       await clearCache(req.which);
+      return { ok: true };
+
+    case 'CLEAR_KEY_STATUS':
+      // Here rather than in the Options page so every write to the statuses
+      // goes through the one queue in shared/key-status.ts.
+      await updateKeyStatuses((cur) => withCleared(cur, req.id));
       return { ok: true };
 
     case 'TRANSLATE_VISIBLE':

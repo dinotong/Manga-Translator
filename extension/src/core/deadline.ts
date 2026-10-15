@@ -10,11 +10,14 @@
  *
  * The caller's own signal still wins: a request the caller cancelled reports
  * as cancelled, not as timed out, because the two lead to different messages.
+ * Whichever happened first decides — a caller cancelling first clears the
+ * timer, so it can never fire; a caller cancelling after the timer fired does
+ * not turn a timeout into a cancellation.
  */
 export interface Deadline {
   /** Aborts when either the caller cancels or time runs out. */
   signal: AbortSignal;
-  /** True only when the deadline fired and the caller had not cancelled first. */
+  /** True when the deadline fired before the caller cancelled. */
   expired(): boolean;
   /** Stop the timer once the request has finished. */
   clear(): void;
@@ -37,7 +40,7 @@ export function deadline(ms: number, caller?: AbortSignal): Deadline {
 
   return {
     signal: controller.signal,
-    expired: () => fired && !caller?.aborted,
+    expired: () => fired,
     clear: () => {
       clearTimeout(timer);
       caller?.removeEventListener('abort', onCaller);

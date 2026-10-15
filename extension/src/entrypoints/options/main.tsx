@@ -27,14 +27,12 @@ import {
   type KeyStatuses,
   moveKey,
   nextQuotaResetAt,
-  withCleared,
 } from '../../core/quota';
 import { PRESETS, type PresetName } from '../../core/resolution';
 import { withAutoSite } from '../../core/site-scope';
 import {
   loadKeyStatuses,
   onKeyStatusesChanged,
-  updateKeyStatuses,
 } from '../../shared/key-status';
 import {
   LANG_LABELS_TH,
@@ -143,14 +141,14 @@ function Options() {
     // Changing the key text makes anything we knew about it obsolete: a pasted
     // replacement for a revoked key must not stay marked invalid.
     if (patchEntry.key !== undefined) {
-      setStatuses(await updateKeyStatuses((cur) => withCleared(cur, id)));
+      await send({ t: 'CLEAR_KEY_STATUS', id });
       setTests((t) => ({ ...t, [id]: { busy: false, msg: '' } }));
     }
   }
 
   async function removeKey(id: string) {
     await setKeys(keys.filter((k) => k.id !== id));
-    setStatuses(await updateKeyStatuses((cur) => withCleared(cur, id)));
+    await send({ t: 'CLEAR_KEY_STATUS', id });
   }
 
   async function testKey(entry: ApiKeyEntry) {
@@ -163,7 +161,7 @@ function Options() {
     if (res.ok) {
       // A key that answers is not exhausted and not revoked, whatever we had
       // recorded — the live answer wins over the bookkeeping.
-      setStatuses(await updateKeyStatuses((cur) => withCleared(cur, entry.id)));
+      await send({ t: 'CLEAR_KEY_STATUS', id: entry.id });
       setTests((t) => ({ ...t, [entry.id]: { busy: false, msg: 'ใช้ได้ ✓', ok: true } }));
     } else {
       setTests((t) => ({
