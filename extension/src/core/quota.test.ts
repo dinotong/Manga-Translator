@@ -318,6 +318,12 @@ describe('pickKey', () => {
     expect(allSpent([], {}, MIDDAY)).toBe(false);
   });
 
+  it('does not report "all spent" for rows added but not filled in yet', () => {
+    // What the Options page shows right after "+ เพิ่ม key" on a fresh install.
+    const blank = [{ id: 'x', label: 'key 1', key: '' }, { id: 'y', label: 'key 2', key: '  ' }];
+    expect(allSpent(blank, {}, MIDDAY)).toBe(false);
+  });
+
   it('goes back to the first key once its day rolls over, not to the last used', () => {
     const st = withExhausted({}, 'a', MIDDAY);
     expect(pickKey(KEYS, st, MIDDAY + 24 * 3600_000)?.id).toBe('a');

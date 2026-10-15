@@ -1161,6 +1161,7 @@ export default defineContentScript({
     // events on the shared object, so they reach every world, and they cover
     // push, replace and back/forward alike (Chrome 102+; we require 116).
     const onNavigate = (): void => {
+      log.debug(`navigated to ${location.pathname}`);
       revalidate();
       // MangaDex goes from a title page to a chapter without ever reloading
       // this script, so the reader/listing answer changes here and nowhere

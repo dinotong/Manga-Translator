@@ -9,7 +9,15 @@
 
 ## Issues รอบสอง 2026-10-14 — milestone `1.0.4` (แผน 2026-10-15)
 
-✅ **แก้แล้ว 18 จาก 19 ใบ (2026-10-15)** · 6649de7 a6b7f64 0175a6f 8dc15f7 bf32604 6c8c088 · extension 651/651 · spike 574/574 · build ผ่าน · **ยังไม่ได้พิสูจน์บน Chrome** · #39 แก้แล้วแต่ยังเปิดไว้รอวัดบน MangaDex
+✅ **แก้แล้ว 18 จาก 19 ใบ (2026-10-15)** · 6649de7 a6b7f64 0175a6f 8dc15f7 bf32604 6c8c088 · extension 651/651 · spike 574/574 · build ผ่าน · ✅ **ครบ 19/19**
+
+**พิสูจน์บน Chrome จริงแล้ว 2026-10-15** (โปรไฟล์ Default · โหลด `.output/chrome-mv3` แบบ unpacked ผ่าน chrome-devtools)
+- #38: ติดตั้งครั้งแรก → หน้าตั้งค่าเปิด 1 แท็บ · reload ส่วนเสริม → 0 แท็บ · ติดตั้งทับ path เดิม → 0 แท็บ
+  - อาการที่ผู้สั่งงานเจอ "เปิดเบราว์เซอร์ทีไรหน้าตั้งค่าเด้ง" = ข้อเดียวกัน: ส่วนเสริม unpacked ที่ build ใหม่ระหว่างปิด-เปิด และ Chrome ที่อัปเดตตัวเอง ยิง `onInstalled` (`update` / `chrome_update`) ตอนเปิด · 1.0.3 เปิดหน้าตั้งค่าทุก reason · **ยังไม่ได้วัดตอนปิด-เปิด Chrome จริง** (มีแท็บผู้ใช้เปิดค้างเยอะ ไม่ปิดเบราว์เซอร์ให้)
+- ปุ่มตรวจสอบระบบ: 6/6 เขียว 6.3 วิ ปุ่มกลับมากดได้ · แคชแสดง "2.35 / 200 MB" ทั้งหน้าตั้งค่าและ Diagnostics (เดิมจะเป็น 210)
+- #42: ไม่ลบ key จริงของผู้ใช้เพื่อเทส → เพิ่ม unit test แถว key ว่างแทน
+- #39: MangaDex เปลี่ยนหน้า SPA 6 ครั้ง content script เริ่มครั้งเดียว ได้ log `navigated to …` ครบทุกครั้ง รวม `/title/…` → `/chapter/…`
+- #36: สองแท็บตอนเดียวกันสั่งแปลพร้อมกัน → รูป hash เดียวกัน 2 งานจบทั้งคู่ห่างกัน 3 วิ · error 0 ทั้งสองแท็บ
 
 HetCreep เปิดเพิ่ม 19 issue (#26–#44) จากรีวิวบอทบน PR snapshot `5375ea7` · **ตรวจกับโค้ดแล้วจริงทั้ง 19 ใบ ไม่มีข้อไหนร้ายแรง** · ติด label + milestone `1.0.4` แล้ว
 ตัวเลขรวม: bug 12 · documentation 5 · infra 2 (มี security 1 ใบ) · good first issue 4 (#37 #41 #42 #43) — บางใบมีหลาย label
@@ -40,7 +48,7 @@ HetCreep เปิดเพิ่ม 19 issue (#26–#44) จากรีวิ�
    - [x] [#28](https://github.com/dinotong/Manga-Translator/issues/28) เพิ่ม job ของ `spike/` (ต้องรันให้ผ่านในเครื่องก่อน)
    - [x] [#33](https://github.com/dinotong/Manga-Translator/issues/33) ตรึง action ด้วย SHA · Dependabot `github-actions` ตั้งไว้แล้ว จะอัปเดต SHA ให้เอง
 6. **ก้อน F: ต้องพิสูจน์ก่อนแก้**
-   - [ ] [#39](https://github.com/dinotong/Manga-Translator/issues/39) patch `history.pushState` ใน isolated world ไม่เห็นการเรียกจาก router ของเว็บ — ตามหลักของ Chrome น่าจะจริง ผู้เปิดก็ขอให้ทดสอบก่อน · วัดบน MangaDex: เข้าจาก listing ไป reader แล้วดูว่า `mt:navigate` ยิงไหม → ถ้าจริงให้ใช้ Navigation API (Chrome 102+ · ขั้นต่ำเราคือ 116)
+   - [x] [#39](https://github.com/dinotong/Manga-Translator/issues/39) patch `history.pushState` ใน isolated world ไม่เห็นการเรียกจาก router ของเว็บ — ตามหลักของ Chrome น่าจะจริง ผู้เปิดก็ขอให้ทดสอบก่อน · วัดบน MangaDex: เข้าจาก listing ไป reader แล้วดูว่า `mt:navigate` ยิงไหม → ถ้าจริงให้ใช้ Navigation API (Chrome 102+ · ขั้นต่ำเราคือ 116)
 
 **พิสูจน์บน Chrome รอบเดียวท้ายสุด** (บอกผู้สั่งงานก่อนเริ่ม): อัปเดตทับ 1.0.3 แล้วหน้า options ต้องไม่เด้ง (#38) · ปุ่มตรวจสอบระบบ · ข้อความ key ว่าง · ตัวเลข MB · MangaDex SPA (#39) · แปลหน้าเดิมสองแท็บพร้อมกัน (#36)
 
