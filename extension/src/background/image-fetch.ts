@@ -1,3 +1,4 @@
+import { deadline, IMAGE_FETCH_TIMEOUT_MS } from '../core/deadline';
 import { PipelineError } from '../shared/errors';
 import { imageHash } from '../shared/hash';
 import { makeLog } from '../shared/log';
@@ -20,6 +21,7 @@ const log = makeLog('fetch');
  */
 export async function fetchImage(
   url: string,
+  signal?: AbortSignal,
 ): Promise<{ bytes: ArrayBuffer; hash: string; type: string }> {
   // The URL comes from a content script, i.e. from inside a web page, and this
   // fetch carries the reader's cookies past CORS. Never let it name anything
@@ -27,7 +29,11 @@ export async function fetchImage(
   if (!isWorkerFetchable(url)) {
     throw new PipelineError('ACQUIRE_FAILED', `refusing to fetch ${short(url)}: not http(s)`);
   }
+  // A cancelled job (page turned, tab closed) must stop downloading too: the
+  // worker frees its queue slot only when the job returns.
+  const limit = deadline(IMAGE_FETCH_TIMEOUT_MS, signal);
   let res: Response;
+  let bytes: ArrayBuffer;
   try {
     res = await fetch(url, {
       // Some readers gate images behind a login cookie — e-hentai/exhentai and
@@ -35,16 +41,23 @@ export async function fetchImage(
       // use this path. Kept for that; the scheme check above is what bounds it.
       credentials: 'include',
       cache: 'force-cache',
+      signal: limit.signal,
     });
+    if (!res.ok) {
+      throw new PipelineError('ACQUIRE_FAILED', `HTTP ${res.status} for ${short(url)}`);
+    }
+    bytes = await res.arrayBuffer();
   } catch (err) {
+    if (err instanceof PipelineError) throw err;
+    if (limit.expired()) {
+      throw new PipelineError('ACQUIRE_FAILED', `no image from ${short(url)} in ${IMAGE_FETCH_TIMEOUT_MS / 1000} s`);
+    }
+    if (signal?.aborted) throw new PipelineError('CANCELLED', 'aborted');
     throw new PipelineError('ACQUIRE_FAILED', `fetch failed for ${short(url)}: ${String(err)}`);
+  } finally {
+    limit.clear();
   }
 
-  if (!res.ok) {
-    throw new PipelineError('ACQUIRE_FAILED', `HTTP ${res.status} for ${short(url)}`);
-  }
-
-  const bytes = await res.arrayBuffer();
   if (bytes.byteLength === 0) {
     throw new PipelineError('ACQUIRE_FAILED', `empty body for ${short(url)}`);
   }

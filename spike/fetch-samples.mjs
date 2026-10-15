@@ -99,7 +99,9 @@ const failed = [];
 
 for (let n = from; n <= to; n++) {
   const url = expand(args.url, n);
-  const ext = (url.split('.').pop() ?? 'jpg').split(/[?#]/)[0];
+  // From the path alone: a query like `?token=abc.def` would otherwise become
+  // the extension, and the harness's sample index filters such files out.
+  const ext = new URL(url).pathname.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'jpg';
   const dest = join(OUT_DIR, `${label}-${String(n).padStart(3, '0')}.${ext}`);
 
   if (await exists(dest)) {

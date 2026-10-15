@@ -66,15 +66,19 @@ function read(): BenchRun[] {
 }
 
 function write(runs: BenchRun[]): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(runs.slice(0, MAX_RUNS)));
-  } catch (err) {
-    // Quota is the likely cause; drop the oldest half and retry once.
-    console.warn('[bench] save failed, trimming history', err);
+  // Newest first (see save), so trimming from the end drops the oldest.
+  let kept = runs.slice(0, MAX_RUNS);
+  for (;;) {
     try {
-      localStorage.setItem(KEY, JSON.stringify(runs.slice(0, Math.floor(MAX_RUNS / 2))));
-    } catch {
-      /* give up quietly — losing history must never break a run */
+      localStorage.setItem(KEY, JSON.stringify(kept));
+      return;
+    } catch (err) {
+      // Quota is the likely cause. Halve what was actually attempted — not
+      // MAX_RUNS, which is a no-op when the history is already shorter — and
+      // keep at least the run just finished.
+      if (kept.length <= 1) return; // give up quietly — losing history must never break a run
+      console.warn('[bench] save failed, trimming history', err);
+      kept = kept.slice(0, Math.max(1, Math.floor(kept.length / 2)));
     }
   }
 }

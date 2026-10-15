@@ -119,6 +119,8 @@ export default defineContentScript({
       adopted: boolean;
       /** Last stage reported, so an element that joins late shows the truth. */
       stage: Stage;
+      /** Aborted by `cancel`, so a download still in progress lets go of its slot. */
+      abort: AbortController;
     }
 
     const active = new Map<string, Job>();
@@ -377,6 +379,7 @@ export default defineContentScript({
         startedAt: Date.now(),
         adopted: false,
         stage: 'acquire',
+        abort: new AbortController(),
       };
       active.set(job.id, job);
       byKey.set(key, job);
@@ -385,7 +388,7 @@ export default defineContentScript({
 
       let source: JobSource;
       try {
-        const got = await acquire(img, profile);
+        const got = await acquire(img, profile, job.abort.signal);
         source = {
           elementKey: elementKey(img),
           url: got.kind === 'url' ? got.url : job.key,
@@ -400,6 +403,8 @@ export default defineContentScript({
         };
         redo.delete(img);
       } catch (err) {
+        // Cancelled mid-download: already settled, and the element has moved on.
+        if (!active.has(job.id)) return;
         const payload = toErrorPayload(err);
         // The hint on screen tells the reader to look here, so the detail
         // behind it has to actually be here.
@@ -474,6 +479,7 @@ export default defineContentScript({
             `at stage ${job.stage} (adopted=${job.adopted}) — work paid for and thrown away`,
         );
       }
+      job.abort.abort();
       send({ t: 'CANCEL', jobId: job.id });
       settle(job);
     }
@@ -761,6 +767,7 @@ export default defineContentScript({
         startedAt: Date.now(),
         adopted: false,
         stage: 'acquire',
+        abort: new AbortController(),
       };
       active.set(job.id, job);
       byKey.set(target.url, job);
@@ -773,7 +780,7 @@ export default defineContentScript({
             settle(job);
             return;
           }
-          const acquired = await acquire(target.img, profile);
+          const acquired = await acquire(target.img, profile, job.abort.signal);
           if (!active.has(job.id)) return;
           if (!target.img.isConnected || srcOf(target.img) !== target.url) {
             prefetchCovered.delete(target.page);
@@ -784,6 +791,7 @@ export default defineContentScript({
           if (acquired.kind === 'bytes') image = acquired.ref;
         }
       } catch (err) {
+        if (!active.has(job.id)) return; // cancelled, not failed
         const payload = toErrorPayload(err);
         prefetchFailures.set(payload.code, (prefetchFailures.get(payload.code) ?? 0) + 1);
         log.debug(`prefetch acquire failed page ${target.page}: ${payload.code} ${payload.message}`);

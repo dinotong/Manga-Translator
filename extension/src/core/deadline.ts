@@ -23,6 +23,13 @@ export interface Deadline {
   clear(): void;
 }
 
+/**
+ * For reading one page image, download *and* body. A CDN that stalls mid-body
+ * would otherwise hold the job, and with it a queue slot, forever. Pages are a
+ * few MB; a minute is far past any healthy transfer.
+ */
+export const IMAGE_FETCH_TIMEOUT_MS = 60_000;
+
 export function deadline(ms: number, caller?: AbortSignal): Deadline {
   const controller = new AbortController();
   let fired = false;

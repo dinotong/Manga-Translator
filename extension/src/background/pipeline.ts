@@ -105,7 +105,7 @@ export async function runJob(
 
   /* ---- 1. bytes ---- */
   onProgress('acquire');
-  const acquired = await acquire(source);
+  const acquired = await acquire(source, signal);
   spent.acquire = Date.now() - began;
 
   /* ---- 2. OCR cache ---- */
@@ -553,6 +553,7 @@ async function learnSource(
 /** Bytes, from whichever of the two acquisition paths applies. */
 async function acquire(
   source: JobSource,
+  signal: AbortSignal | undefined,
 ): Promise<{ bytes: ArrayBuffer; hash: string; type: string }> {
   if (source.image) {
     // The content script already read it — blob:, data: or same-origin, where
@@ -566,7 +567,7 @@ async function acquire(
   if (!source.url) {
     throw new PipelineError('ACQUIRE_FAILED', 'job has neither bytes nor a URL');
   }
-  return fetchImage(source.url);
+  return fetchImage(source.url, signal);
 }
 
 /**

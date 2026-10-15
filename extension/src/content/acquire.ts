@@ -1,3 +1,4 @@
+import { deadline, IMAGE_FETCH_TIMEOUT_MS } from '../core/deadline';
 import { bytesToBase64 } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
 import { imageHash } from '../shared/hash';
@@ -26,7 +27,16 @@ export type Acquired =
   | { kind: 'bytes'; ref: ImageRef; natural: { w: number; h: number } }
   | { kind: 'url'; url: string; natural: { w: number; h: number } };
 
-export async function acquire(img: HTMLImageElement, profile: SiteProfile): Promise<Acquired> {
+/**
+ * `signal` is the job's: once it aborts, a download still in progress stops and
+ * this rejects with CANCELLED, so the job gives its queue slot back instead of
+ * waiting on the network for an answer nobody wants.
+ */
+export async function acquire(
+  img: HTMLImageElement,
+  profile: SiteProfile,
+  signal?: AbortSignal,
+): Promise<Acquired> {
   // currentSrc, not src: it accounts for srcset and <picture>, and readers use
   // both to serve a different file than the markup suggests.
   const url = img.currentSrc || img.src;
@@ -43,9 +53,10 @@ export async function acquire(img: HTMLImageElement, profile: SiteProfile): Prom
 
   if (local || sameOrigin || profile.acquire === 'content-script') {
     try {
-      return { kind: 'bytes', ref: await readHere(url, img), natural };
+      return { kind: 'bytes', ref: await readHere(url, img, signal), natural };
     } catch (err) {
       if (local) throw err; // no second path exists for blob:
+      if (isCancelled(err)) throw err; // nobody wants the second path either
       // A same-origin guess that turned out to be wrong is not fatal — the
       // service worker can still fetch it.
       console.debug('[mt:acquire] page fetch failed, deferring to service worker', err);
@@ -55,15 +66,17 @@ export async function acquire(img: HTMLImageElement, profile: SiteProfile): Prom
   return { kind: 'url', url, natural };
 }
 
-async function readHere(url: string, img: HTMLImageElement): Promise<ImageRef> {
+async function readHere(url: string, img: HTMLImageElement, signal?: AbortSignal): Promise<ImageRef> {
+  const limit = deadline(IMAGE_FETCH_TIMEOUT_MS, signal);
   try {
-    const res = await fetch(url, { credentials: 'include' });
+    const res = await fetch(url, { credentials: 'include', signal: limit.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status} reading ${url.slice(0, 60)}`);
 
     const bytes = await res.arrayBuffer();
     if (bytes.byteLength === 0) throw new Error('empty image body');
     return await imageRef(bytes);
   } catch (err) {
+    if (signal?.aborted && !limit.expired()) throw new PipelineError('CANCELLED', 'aborted');
     if (url.startsWith('blob:')) return readDecodedBlob(img, err);
     if (url.startsWith('data:')) {
       throw new PipelineError('ACQUIRE_FAILED', `could not read local image: ${String(err)}`);
@@ -72,7 +85,13 @@ async function readHere(url: string, img: HTMLImageElement): Promise<ImageRef> {
       throw new PipelineError('ACQUIRE_FAILED', err.message);
     }
     throw err;
+  } finally {
+    limit.clear();
   }
+}
+
+function isCancelled(err: unknown): boolean {
+  return err instanceof PipelineError && err.code === 'CANCELLED';
 }
 
 async function readDecodedBlob(img: HTMLImageElement, fetchError: unknown): Promise<ImageRef> {

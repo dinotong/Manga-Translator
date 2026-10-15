@@ -82,7 +82,10 @@ export function isLoaded(img: HTMLImageElement): boolean {
 
 function featuresOf(img: HTMLImageElement) {
   const rect = img.getBoundingClientRect();
-  const ancestor = img.closest('[id],[class]');
+  // From the parent: closest() tests the element itself first, so an image with
+  // its own id or class would otherwise read its own name here (already in
+  // `text`) and never the reader container's.
+  const ancestor = img.parentElement?.closest('[id],[class]');
 
   let inChrome = false;
   for (let el: Element | null = img; el; el = el.parentElement) {
