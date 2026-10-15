@@ -136,7 +136,9 @@ export default defineBackground(() => {
         try {
           const settings = await loadSettings();
           const outcome = await runJob(
-            raw.source,
+            // The page URL is Chrome's, not the message's: it decides whether
+            // the image fetch may carry cookies or reach a private network.
+            { ...raw.source, pageUrl: port.sender?.url ?? raw.source.pageUrl },
             settings,
             (stage, detail) => post(port, { t: 'PROGRESS', jobId: raw.jobId, stage, ...(detail ? { detail } : {}) }),
             controller.signal,

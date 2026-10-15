@@ -1,3 +1,4 @@
+import { declaredTooLarge, MAX_IMAGE_BYTES, readCapped, TooLargeError } from '../core/body-cap';
 import { deadline, IMAGE_FETCH_TIMEOUT_MS } from '../core/deadline';
 import { bytesToBase64 } from '../shared/blob-bridge';
 import { PipelineError } from '../shared/errors';
@@ -71,12 +72,18 @@ async function readHere(url: string, img: HTMLImageElement, signal?: AbortSignal
   try {
     const res = await fetch(url, { credentials: 'include', signal: limit.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status} reading ${url.slice(0, 60)}`);
+    if (declaredTooLarge(res.headers.get('content-length'))) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new TooLargeError(MAX_IMAGE_BYTES);
+    }
 
-    const bytes = await res.arrayBuffer();
+    // Same cap as the worker's: the bytes are base64'd into one message next.
+    const bytes = await readCapped(res.body);
     if (bytes.byteLength === 0) throw new Error('empty image body');
     return await imageRef(bytes);
   } catch (err) {
     if (signal?.aborted && !limit.expired()) throw new PipelineError('CANCELLED', 'aborted');
+    if (err instanceof TooLargeError) throw new PipelineError('ACQUIRE_FAILED', err.message);
     if (url.startsWith('blob:')) return readDecodedBlob(img, err);
     if (url.startsWith('data:')) {
       throw new PipelineError('ACQUIRE_FAILED', `could not read local image: ${String(err)}`);

@@ -567,7 +567,7 @@ async function acquire(
   if (!source.url) {
     throw new PipelineError('ACQUIRE_FAILED', 'job has neither bytes nor a URL');
   }
-  return fetchImage(source.url, signal);
+  return fetchImage(source.url, signal, source.pageUrl);
 }
 
 /**

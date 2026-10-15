@@ -8,6 +8,37 @@
 
 ---
 
+## D-047 · **service worker ดึงรูปตามนโยบาย: cookie เฉพาะ site เดียวกับหน้า · ไม่เข้า LAN จากหน้าสาธารณะ · เพดาน 50 MB**
+**2026-10-15 · `core/fetch-policy.ts`, `core/body-cap.ts`, `background/image-fetch.ts`, `content/acquire.ts`**
+
+### ที่มา
+
+ผู้ตรวจภายนอกแจ้งผ่านช่องทางรายงานช่องโหว่ (2026-10-14) — SW `fetch()` URL ที่หน้าเว็บเลือกด้วย `credentials:'include'` ใต้ `<all_urls>` จึงแนบ cookie ของผู้ใช้ (รวม `SameSite=Lax`) ข้าม site และตาม redirect เข้า loopback ได้ ซึ่งหน้าเว็บทำเองไม่ได้ · และการดึงรูปไม่มี timeout / เพดานขนาด / การยกเลิก (timeout กับการยกเลิกแก้แล้วใน `6940c3e`)
+
+### ตัดสินใจ
+
+- **cookie:** แนบเฉพาะเมื่อรูปอยู่ site เดียวกับหน้า (`siteOf` = 2 label ท้าย หรือ 3 ใต้ `co.jp`/`co.uk`/…) · นอกนั้น `omit` เท่ากับที่ `<img>` ของหน้าทำได้อยู่แล้ว
+- **host:** ไม่ดึงจาก loopback / RFC1918 / link-local / CGNAT / `.local` ฯลฯ **เว้นแต่หน้าเองก็อยู่ในวงนั้น** (Komga/Kavita บน LAN ยังใช้ได้)
+- **page URL:** ใช้ `port.sender.url` ที่ Chrome รายงาน ไม่ใช่ `source.pageUrl` จากข้อความ
+- **redirect:** ยิงครั้งแรก `redirect:'manual'` · ถ้า redirect ยิงใหม่แบบไม่มี cookie แล้วตรวจ host ปลายทางด้วยกฎเดียวกัน
+- **ขนาด:** เพดาน 50 MB ทั้งจาก `Content-Length` และนับระหว่างอ่าน stream — ใช้ทั้ง SW และ content script
+
+### ทางที่ไม่เลือก
+
+- `declarativeNetRequest` บล็อกทุก hop รวม redirect — ต้องขอสิทธิ์ใหม่ (Chrome ปิดส่วนเสริมจนผู้ใช้กดยอมรับ + รีวิวร้านใหม่)
+- Public Suffix List เต็ม (~250 KB) — พลาดแค่กรณี suffix สองชั้นที่ไม่ได้ลิสต์ ซึ่งมีผลแค่เรื่องแนบ cookie และ cookie ยังถูก browser จำกัดตาม domain ที่ตั้ง
+- ตัด cookie ทุกกรณี — เว็บที่ต้อง login เสิร์ฟรูปจาก subdomain ของตัวเอง (กรณีนี้ยังได้ cookie)
+
+### ข้อจำกัดที่รู้
+
+DNS rebinding (ชื่อสาธารณะที่ resolve เป็น IP ภายใน) ตรวจจาก extension ไม่ได้ · request ที่ตาม redirect เกิดขึ้นก่อนตรวจปลายทาง แต่ไม่มี cookie แล้ว · **ยังไม่ได้วัดกับเว็บที่ต้อง login** (Edge profile `D:\mt-profile`) — ถ้ารูปของ e-hentai/luscious มาจากคนละ site และต้องใช้ cookie จะต้องเพิ่มข้อยกเว้นใน site profile
+
+### ย้อนกลับ
+
+ง่าย — กฎอยู่ใน `core/fetch-policy.ts` ที่เดียว
+
+---
+
 ## D-046 · **MangaPlus อ่านล่วงหน้าจากรูปที่ mount ใน DOM ไม่ใช่เดา URL**
 **2026-10-12 · `content/site-profiles.ts`, `entrypoints/content.ts`**
 
