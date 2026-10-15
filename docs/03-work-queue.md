@@ -7,6 +7,41 @@
 > - ลิงก์นโยบาย `github.com/.../blob/...` ตอนกดส่งครั้งแรกร้านแจ้งว่า "เข้าถึงไม่ได้" แต่กดส่งซ้ำแล้วผ่าน ถ้ารีวิวตีกลับด้วยเหตุนี้ → ทำ `gh-pages` branch ที่มีหน้าเดียว (ห้ามเปิด Pages จาก `docs/` เพราะมีชื่อเว็บผู้ใหญ่)
 > - วิธีการทดสอบ: ให้ทีมรีวิวขอ key ฟรีเอง ไม่ได้ให้ key · ถ้าถูกตีกลับว่าทดสอบไม่ได้ → key ทดสอบจากบัญชี store แบบไม่ผูก billing แล้วลบทิ้งหลังผ่าน
 
+## Issues รอบสอง 2026-10-14 — milestone `1.0.4` (แผน 2026-10-15)
+
+HetCreep เปิดเพิ่ม 19 issue (#26–#44) จากรีวิวบอทบน PR snapshot `5375ea7` · **ตรวจกับโค้ดแล้วจริงทั้ง 19 ใบ ไม่มีข้อไหนร้ายแรง** · ติด label + milestone `1.0.4` แล้ว
+ตัวเลขรวม: bug 12 · documentation 5 · infra 2 (มี security 1 ใบ) · good first issue 4 (#37 #41 #42 #43) — บางใบมีหลาย label
+
+เรียงตามผลกระทบต่อผู้ใช้ · หนึ่งก้อน = หนึ่ง commit ที่ใส่ `Fixes #N` ของทุกใบในก้อน
+
+1. **ก้อน A: เอกสารที่ผู้ใช้และร้านเห็น** (ไม่ต้องส่งรีวิวใหม่ แต่ privacy.md ลิงก์จากหน้าร้าน)
+   - [ ] [#32](https://github.com/dinotong/Manga-Translator/issues/32) install-for-friends บอกว่าส่งทั้งภาพ → ที่จริงส่งแค่ crop
+   - [ ] [#34](https://github.com/dinotong/Manga-Translator/issues/34) privacy.md: ต้องเขียนว่า SW ดึงรูปจากโฮสต์ของเว็บที่อ่านอยู่
+   - [ ] [#35](https://github.com/dinotong/Manga-Translator/issues/35) INSTALL.md: โมเดลมากับแพ็กเกจแล้ว ไม่มีขั้นดาวน์โหลด
+   - [ ] [#44](https://github.com/dinotong/Manga-Translator/issues/44) USAGE.md: batch ได้สูงสุด 3 หน้า · lookahead ค่าเริ่มต้น 10 เพดาน 200 · nhentai prefetch ได้แล้ว
+   - [ ] [#37](https://github.com/dinotong/Manga-Translator/issues/37) ย้าย JSDoc ของ `expandBox`
+2. **ก้อน B: bug เล็กที่ผู้ใช้เห็น**
+   - [ ] [#38](https://github.com/dinotong/Manga-Translator/issues/38) 🔴 **ต้องแก้ก่อนปล่อยรุ่นที่สองบน store** — `onInstalled` เปิด options ทุกครั้งที่อัปเดต · 1.0.4 จะเป็นรุ่นแรกที่ผู้ใช้ store ได้รับเป็นการอัปเดตอัตโนมัติ ถ้าไม่แก้ จะเด้งหน้าตั้งค่าให้ทุกคน
+   - [ ] [#40](https://github.com/dinotong/Manga-Translator/issues/40) log เรียก `onReaderPage()` บนทุกเว็บ → **แก้ที่โค้ด** ไม่ใช่ที่ privacy.md (นโยบายเขียนไว้ถูกแล้ว)
+   - [ ] [#41](https://github.com/dinotong/Manga-Translator/issues/41) `diagBusy` ค้าง → `try/finally`
+   - [ ] [#42](https://github.com/dinotong/Manga-Translator/issues/42) ใช้ `allSpent` ของ `core/quota.ts`
+   - [ ] [#43](https://github.com/dinotong/Manga-Translator/issues/43) ใช้ 1024² ทุกจุด (select, หน้าสถิติ, diagnose) · ป้ายยังเขียนว่า MB ได้
+3. **ก้อน C: ปล่อยทรัพยากรบนทางที่ล้ม** (offscreen/pipeline)
+   - [ ] [#36](https://github.com/dinotong/Manga-Translator/issues/36) key ของภาพที่จอดไว้ซ้ำกันข้ามงาน — **เกิดได้จริง** เพราะงานที่สอง `putBytes` ก่อนเข้าคิว `detectSerially` แล้วงานแรกลบ key เดียวกันทิ้ง → ใช้ key เฉพาะงาน
+   - [ ] [#31](https://github.com/dinotong/Manga-Translator/issues/31) bitmap/crop ใน `detect-page.ts` ไม่อยู่ใน `finally`
+   - [ ] [#29](https://github.com/dinotong/Manga-Translator/issues/29) `takeBytes` ของ crop อยู่นอก `try`
+   - [ ] [#26](https://github.com/dinotong/Manga-Translator/issues/26) `getDetector` dispose session ที่กำลังใช้อยู่ → เอาการเลือก/ทิ้ง detector เข้าคิวเดียวกัน
+4. **ก้อน D: เรื่องจังหวะชนกัน**
+   - [ ] [#27](https://github.com/dinotong/Manga-Translator/issues/27) key-status · **ต่างจาก issue:** หน้า options ก็เขียนจริง (`options/main.tsx:144/151/164`) คอมเมนต์ "only the worker writes" จึงผิด · คิวใน worker อย่างเดียวไม่พอ → ให้ options ส่ง message ให้ SW เขียนแทน แล้วค่อยต่อคิวแบบ `set-memory.ts`
+   - [ ] [#30](https://github.com/dinotong/Manga-Translator/issues/30) `expired()` คืน `fired` อย่างเดียว + test ลำดับ timeout→abort
+5. **ก้อน E: CI**
+   - [ ] [#28](https://github.com/dinotong/Manga-Translator/issues/28) เพิ่ม job ของ `spike/` (ต้องรันให้ผ่านในเครื่องก่อน)
+   - [ ] [#33](https://github.com/dinotong/Manga-Translator/issues/33) ตรึง action ด้วย SHA · Dependabot `github-actions` ตั้งไว้แล้ว จะอัปเดต SHA ให้เอง
+6. **ก้อน F: ต้องพิสูจน์ก่อนแก้**
+   - [ ] [#39](https://github.com/dinotong/Manga-Translator/issues/39) patch `history.pushState` ใน isolated world ไม่เห็นการเรียกจาก router ของเว็บ — ตามหลักของ Chrome น่าจะจริง ผู้เปิดก็ขอให้ทดสอบก่อน · วัดบน MangaDex: เข้าจาก listing ไป reader แล้วดูว่า `mt:navigate` ยิงไหม → ถ้าจริงให้ใช้ Navigation API (Chrome 102+ · ขั้นต่ำเราคือ 116)
+
+**พิสูจน์บน Chrome รอบเดียวท้ายสุด** (บอกผู้สั่งงานก่อนเริ่ม): อัปเดตทับ 1.0.3 แล้วหน้า options ต้องไม่เด้ง (#38) · ปุ่มตรวจสอบระบบ · ข้อความ key ว่าง · ตัวเลข MB · MangaDex SPA (#39) · แปลหน้าเดิมสองแท็บพร้อมกัน (#36)
+
 ## Issues จากภายนอก 2026-10-14 — milestone `1.0.3`
 
 HetCreep เปิด [16 issue](https://github.com/dinotong/Manga-Translator/issues) จากการตรวจรีโป · ตรวจกับโค้ด v1.0.2 แล้ว **จริงทั้งหมด ไม่มีข้อไหนร้ายแรง** · รายละเอียดอยู่ใน issue — ที่นี่เก็บแค่ลำดับ + ข้อที่เราสรุปต่างจาก issue
