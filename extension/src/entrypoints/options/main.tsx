@@ -2,6 +2,7 @@ import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import '../../ui/ui.css';
 import {
+  BYTES_PER_MB,
   clampCacheBytes,
   clampCachePages,
   estimateBytesForPages,
@@ -20,6 +21,7 @@ import { formatDiagnostics } from '../../core/diag-report';
 import {
   type ApiKeyEntry,
   keyFingerprint,
+  allSpent,
   keyReport,
   type KeyState,
   type KeyStatuses,
@@ -173,16 +175,22 @@ function Options() {
 
   async function runDiagnostics() {
     setDiagBusy(true);
-    const res = await send({ t: 'DIAGNOSE' });
-    setLines('lines' in res ? res.lines : [{ id: 'x', label: 'ตรวจไม่สำเร็จ', status: 'fail', detail: JSON.stringify(res), fix: '' }]);
-    setDiagBusy(false);
+    try {
+      const res = await send({ t: 'DIAGNOSE' });
+      setLines('lines' in res ? res.lines : [{ id: 'x', label: 'ตรวจไม่สำเร็จ', status: 'fail', detail: JSON.stringify(res), fix: '' }]);
+    } catch (err) {
+      // The worker may still be starting; say so instead of leaving the button dead.
+      setLines([{ id: 'x', label: 'ตรวจไม่สำเร็จ', status: 'fail', detail: String(err), fix: 'ลองกดอีกครั้ง' }]);
+    } finally {
+      setDiagBusy(false);
+    }
     void refreshStats();
   }
 
   const g = s.translation.gemini;
   const now = Date.now();
   const report = keyReport(keys, statuses, now);
-  const allSpent = keys.length > 0 && !report.some((r) => r.state === 'active');
+  const spent = allSpent(keys, statuses, now);
   const resetLabel = new Date(nextQuotaResetAt(now)).toLocaleString('th-TH', {
     hour: '2-digit',
     minute: '2-digit',
@@ -298,7 +306,7 @@ function Options() {
           <button onClick={() => void addKey()}>+ เพิ่ม key</button>
         </div>
 
-        {allSpent && (
+        {spent && (
           <div class="note">
             <b>ใช้ครบทุก key แล้ว</b> — โควตารายวันจะรีเซ็ต {resetLabel} น.
             (Google นับวันตาม<b>เวลาแปซิฟิก</b> ไม่ใช่เวลาไทย จึงไม่ตรงกับเที่ยงคืนบ้านเรา)
@@ -691,7 +699,7 @@ function Options() {
           }
         />
         <p class="hint">
-          {s.cache.maxPages} หน้า ≈ <b>{(estimateBytesForPages(s.cache.maxPages) / 1e6).toFixed(1)} MB</b>{' '}
+          {s.cache.maxPages} หน้า ≈ <b>{(estimateBytesForPages(s.cache.maxPages) / BYTES_PER_MB).toFixed(1)} MB</b>{' '}
           บนดิสก์ — แคชเก็บ<b>ตำแหน่งกล่องกับตัวหนังสือ ไม่ได้เก็บรูป</b> หน้าหนึ่งจึงประมาณ 4 KB เท่านั้น ·
           ตอนหนึ่งของ MangaDex ปกติ 20–45 หน้า
         </p>
@@ -706,18 +714,18 @@ function Options() {
 
         <label>เพดานพื้นที่ (ตัวกันจริง)</label>
         <select
-          value={String(Math.round(s.cache.maxBytes / 1024 / 1024))}
+          value={String(Math.round(s.cache.maxBytes / BYTES_PER_MB))}
           onChange={(e) =>
             void patch({
               cache: {
                 ...s.cache,
-                maxBytes: clampCacheBytes(Number((e.target as HTMLSelectElement).value) * 1024 * 1024),
+                maxBytes: clampCacheBytes(Number((e.target as HTMLSelectElement).value) * BYTES_PER_MB),
               },
             })
           }
         >
           {/* A hand-edited ceiling gets its own row rather than showing as blank. */}
-          {[...new Set([...CACHE_BYTE_CHOICES, Math.round(s.cache.maxBytes / 1024 / 1024)])]
+          {[...new Set([...CACHE_BYTE_CHOICES, Math.round(s.cache.maxBytes / BYTES_PER_MB)])]
             .sort((a, b) => a - b)
             .map((mb) => (
               <option key={mb} value={String(mb)}>
@@ -737,7 +745,7 @@ function Options() {
               <b>
                 {stats.ocrRecords} / {s.cache.maxPages} หน้า
               </b>{' '}
-              · {(stats.bytes / 1e6).toFixed(2)} / {(s.cache.maxBytes / 1e6).toFixed(0)} MB ·{' '}
+              · {(stats.bytes / BYTES_PER_MB).toFixed(2)} / {(s.cache.maxBytes / BYTES_PER_MB).toFixed(0)} MB ·{' '}
               {stats.translationRecords} ประโยค
             </>
           ) : (

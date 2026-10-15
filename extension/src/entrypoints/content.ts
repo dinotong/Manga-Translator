@@ -1285,8 +1285,10 @@ export default defineContentScript({
     // in. The script stays resident only to answer the right-click menu and the
     // popup's "translate this page now", which cost nothing until used.
     if (siteOn()) startObserving();
+    // `onReaderPage()` can scan and measure every image, so it is only asked
+    // where scanning is already allowed.
     log.info(
-      `observing=${observing} site=${siteOn()} reader=${onReaderPage()} prefetch=${Boolean(profile.prefetch)}`,
+      `observing=${observing} site=${siteOn()} reader=${siteOn() ? onReaderPage() : '-'} prefetch=${Boolean(profile.prefetch)}`,
     );
 
     function nearViewport(r: DOMRect): boolean {

@@ -10,6 +10,7 @@ import {
   type Running,
   type WorkKind,
 } from '../core/scheduling';
+import { BYTES_PER_MB } from '../core/cache-budget';
 import { clearTransfers } from '../shared/blob-bridge';
 import { HINTS_TH, toErrorPayload } from '../shared/errors';
 import { tidyKeyStatuses } from '../shared/key-status';
@@ -62,7 +63,7 @@ export default defineBackground(() => {
     .setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
     .catch((err: unknown) => log.warn('could not restrict storage access', err));
 
-  chrome.runtime.onInstalled.addListener(async () => {
+  chrome.runtime.onInstalled.addListener(async (details) => {
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
         id: MENU_ID,
@@ -72,7 +73,10 @@ export default defineBackground(() => {
     });
     // A transfer left parked by a job that died with the worker is dead weight.
     await clearTransfers();
-    void chrome.runtime.openOptionsPage();
+    // Only a first install needs the key page. This event also fires on every
+    // extension and browser update, and a settings tab popping open after an
+    // automatic store update is noise.
+    if (details.reason === 'install') void chrome.runtime.openOptionsPage();
   });
 
   chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -449,7 +453,7 @@ async function diagnose(): Promise<DiagnosticLine[]> {
       // Pages first and against the limit the reader set, because "37 / 60
       // หน้า" answers the question they have and a raw megabyte figure never
       // did. The ceiling is second because it is a guard, not a dial.
-      detail: `${stats.ocrRecords} / ${maxPages} หน้า · ${(stats.bytes / 1e6).toFixed(2)} / ${(maxBytes / 1e6).toFixed(0)} MB · ${stats.translationRecords} ประโยค`,
+      detail: `${stats.ocrRecords} / ${maxPages} หน้า · ${(stats.bytes / BYTES_PER_MB).toFixed(2)} / ${(maxBytes / BYTES_PER_MB).toFixed(0)} MB · ${stats.translationRecords} ประโยค`,
       fix: '',
     });
   } catch (err) {

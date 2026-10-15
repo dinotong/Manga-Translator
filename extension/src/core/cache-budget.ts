@@ -65,6 +65,9 @@ export const MIN_CACHE_PAGES = 11;
  */
 export const MAX_CACHE_PAGES = 2000;
 
+/** The cache ceiling's unit, everywhere it is chosen or shown. */
+export const BYTES_PER_MB = 1024 * 1024;
+
 export const MIN_CACHE_BYTES = 20 * 1024 * 1024;
 export const MAX_CACHE_BYTES = 2000 * 1024 * 1024;
 
