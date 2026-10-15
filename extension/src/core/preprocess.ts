@@ -100,15 +100,6 @@ export function rgbaToNchw(rgba: Readonly<Uint8ClampedArray>, size: Size): Float
 }
 
 /**
- * Grow a box by a fraction of its short side.
- *
- * DB detectors are trained on shrunk polygons, so raw output sits inside the
- * real glyph extent. PaddleOCR compensates with a polygon unclip; for
- * axis-aligned boxes a proportional expand is a close enough approximation.
- * Keep it small — over-expanding makes neighbouring bubbles touch, and merging
- * them is grouping's decision to make, not the detector's.
- */
-/**
  * Undo the dilation that was applied to join glyphs into a line.
  *
  * Dilating the probability map grows every blob by the structuring element, so
@@ -136,6 +127,15 @@ export function shrinkBox(
   return { x: box.x + dx, y: box.y + dy, w: box.w - dx * 2, h: box.h - dy * 2 };
 }
 
+/**
+ * Grow a box by a fraction of its short side.
+ *
+ * DB detectors are trained on shrunk polygons, so raw output sits inside the
+ * real glyph extent. PaddleOCR compensates with a polygon unclip; for
+ * axis-aligned boxes a proportional expand is a close enough approximation.
+ * Keep it small — over-expanding makes neighbouring bubbles touch, and merging
+ * them is grouping's decision to make, not the detector's.
+ */
 export function expandBox(
   box: { x: number; y: number; w: number; h: number },
   ratio: number,
