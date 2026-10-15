@@ -58,21 +58,20 @@ export async function detectPage(
   // Every bitmap is a decoded page of tens of MB, so each is closed on the way
   // out whether or not the steps after it succeed. So are the crops already
   // parked for the worker when a later block fails: nobody will take them.
-  let heldDet: ImageBitmap | undefined;
-  let heldRec: ImageBitmap | undefined;
+  let resized: PromiseSettledResult<ImageBitmap>[] = [];
   const out: DetectedBlock[] = [];
   let ok = false;
   try {
-    const [det, rec] = await Promise.allSettled([
+    resized = await Promise.allSettled([
       createImageBitmap(original, { resizeWidth: plan.det.w, resizeQuality: 'high' }),
       createImageBitmap(original, { resizeWidth: plan.rec.w, resizeQuality: 'high' }),
     ]);
-    if (det.status === 'fulfilled') heldDet = det.value;
-    if (rec.status === 'fulfilled') heldRec = rec.value;
-    if (det.status === 'rejected') throw det.reason;
-    if (rec.status === 'rejected') throw rec.reason;
-    const detBitmap = det.value;
-    const recBitmap = rec.value;
+    const [detBitmap, recBitmap] = resized.map((r) => {
+      if (r.status === 'rejected') throw r.reason;
+      return r.value;
+    }) as [ImageBitmap, ImageBitmap];
+    // Freed as soon as both copies exist: it is the largest of the three, and
+    // detection is the slow step still ahead.
     original.close();
     const tDecode = performance.now() - t0;
 
@@ -140,9 +139,8 @@ export async function detectPage(
       ms: { decode: tDecode, detect: tDetect, group: tGroup },
     };
   } finally {
-    original.close();
-    heldDet?.close();
-    heldRec?.close();
+    original.close(); // again for the paths that threw first; close() is idempotent
+    for (const r of resized) if (r.status === 'fulfilled') r.value.close();
     if (!ok) await Promise.all(out.map((b) => releaseBytes(b.cropRef)));
   }
 }

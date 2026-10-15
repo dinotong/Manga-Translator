@@ -433,7 +433,7 @@ async function diagnose(): Promise<DiagnosticLine[]> {
       status: caps && caps.modelBytes > 0 ? 'ok' : 'fail',
       detail:
         caps && caps.modelBytes > 0
-          ? `มากับส่วนเสริมแล้ว ${(caps.modelBytes / 1e6).toFixed(1)} MB`
+          ? `มากับส่วนเสริมแล้ว ${(caps.modelBytes / BYTES_PER_MB).toFixed(1)} MB`
           : 'ไม่พบไฟล์โมเดลในส่วนเสริม',
       fix: caps && caps.modelBytes > 0 ? '' : 'ไฟล์ติดตั้งไม่ครบ — ถอนแล้วติดตั้งใหม่',
     });

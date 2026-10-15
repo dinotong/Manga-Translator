@@ -1,3 +1,4 @@
+import { serialQueue } from '../core/serial';
 import { type KeyStatuses, pruneStatuses } from '../core/quota';
 import type { ApiKeyEntry } from '../core/quota';
 
@@ -22,7 +23,7 @@ export async function loadKeyStatuses(): Promise<KeyStatuses> {
   return raw && typeof raw === 'object' ? (raw as KeyStatuses) : {};
 }
 
-export async function saveKeyStatuses(next: KeyStatuses): Promise<void> {
+async function saveKeyStatuses(next: KeyStatuses): Promise<void> {
   await chrome.storage.local.set({ [KEY]: next });
 }
 
@@ -33,13 +34,7 @@ export async function saveKeyStatuses(next: KeyStatuses): Promise<void> {
  * context, which is why only the worker writes: the Options page asks it to
  * (CLEAR_KEY_STATUS) instead of writing itself.
  */
-let chain: Promise<unknown> = Promise.resolve();
-
-function serially<T>(task: () => Promise<T>): Promise<T> {
-  const next = chain.then(task, task);
-  chain = next.catch(() => undefined);
-  return next;
-}
+const serially = serialQueue();
 
 /** Read-modify-write against fresh state, queued behind every other write. */
 export function updateKeyStatuses(fn: (current: KeyStatuses) => KeyStatuses): Promise<KeyStatuses> {

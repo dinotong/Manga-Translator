@@ -1,4 +1,5 @@
 import type { PresetName } from '../../core/resolution';
+import { serialQueue } from '../../core/serial';
 import { releaseBytes, takeBytes } from '../../shared/blob-bridge';
 import { toErrorPayload } from '../../shared/errors';
 import { makeLog } from '../../shared/log';
@@ -42,13 +43,7 @@ function touchIdle(): void {
  * arrive mid-detection, and swapping the runtime then would dispose the session
  * that detection is running on.
  */
-let detectorChain: Promise<unknown> = Promise.resolve();
-
-function withDetector<T>(task: () => Promise<T>): Promise<T> {
-  const next = detectorChain.then(task, task);
-  detectorChain = next.catch(() => undefined);
-  return next;
-}
+const withDetector = serialQueue();
 
 async function getDetector(
   runtime: 'auto' | 'webgpu' | 'wasm',

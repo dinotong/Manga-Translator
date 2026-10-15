@@ -68,8 +68,8 @@ export const MAX_CACHE_PAGES = 2000;
 /** The cache ceiling's unit, everywhere it is chosen or shown. */
 export const BYTES_PER_MB = 1024 * 1024;
 
-export const MIN_CACHE_BYTES = 20 * 1024 * 1024;
-export const MAX_CACHE_BYTES = 2000 * 1024 * 1024;
+export const MIN_CACHE_BYTES = 20 * BYTES_PER_MB;
+export const MAX_CACHE_BYTES = 2000 * BYTES_PER_MB;
 
 /**
  * 1000 pages. It was 200, and the owner's own cache was found full at 200/200
@@ -82,7 +82,7 @@ export const MAX_CACHE_BYTES = 2000 * 1024 * 1024;
 export const DEFAULT_CACHE_PAGES = 1000;
 
 /** Unchanged from the fixed budget this setting replaced. */
-export const DEFAULT_CACHE_BYTES = 200 * 1024 * 1024;
+export const DEFAULT_CACHE_BYTES = 200 * BYTES_PER_MB;
 
 export interface CacheLimits {
   /** Pages of OCR kept. The reader's control. */

@@ -141,27 +141,36 @@ function Options() {
     // Changing the key text makes anything we knew about it obsolete: a pasted
     // replacement for a revoked key must not stay marked invalid.
     if (patchEntry.key !== undefined) {
-      await send({ t: 'CLEAR_KEY_STATUS', id });
+      await clearKeyStatus(id);
       setTests((t) => ({ ...t, [id]: { busy: false, msg: '' } }));
     }
   }
 
   async function removeKey(id: string) {
     await setKeys(keys.filter((k) => k.id !== id));
-    await send({ t: 'CLEAR_KEY_STATUS', id });
+    await clearKeyStatus(id);
   }
 
   async function testKey(entry: ApiKeyEntry) {
     setTests((t) => ({ ...t, [entry.id]: { busy: true, msg: 'กำลังทดสอบ…' } }));
-    const res = await send({
-      t: 'TEST_KEY',
-      apiKey: entry.key,
-      model: s.translation.gemini.model,
-    });
+    let res: Response;
+    try {
+      res = await send({
+        t: 'TEST_KEY',
+        apiKey: entry.key,
+        model: s.translation.gemini.model,
+      });
+    } catch (err) {
+      // Same failure as Diagnostics when the worker is still starting: report
+      // it on the row instead of leaving "กำลังทดสอบ…" up for good.
+      setTests((t) => ({ ...t, [entry.id]: { busy: false, msg: `${String(err)}
+ลองกดอีกครั้ง`, ok: false } }));
+      return;
+    }
     if (res.ok) {
       // A key that answers is not exhausted and not revoked, whatever we had
       // recorded — the live answer wins over the bookkeeping.
-      await send({ t: 'CLEAR_KEY_STATUS', id: entry.id });
+      await clearKeyStatus(entry.id);
       setTests((t) => ({ ...t, [entry.id]: { busy: false, msg: 'ใช้ได้ ✓', ok: true } }));
     } else {
       setTests((t) => ({
@@ -798,7 +807,7 @@ function Options() {
       </section>
 
       <p class="foot">
-        Apache-2.0 · ตัวตรวจจับข้อความคือ PP-OCRv4 det (Apache-2.0) มากับส่วนเสริม 4.7 MB
+        Apache-2.0 · ตัวตรวจจับข้อความคือ PP-OCRv4 det (Apache-2.0) มากับส่วนเสริม 4.5 MB
       </p>
     </div>
   );
@@ -822,6 +831,25 @@ const STATE_CLASS: Record<KeyState, string> = {
 
 async function send(req: Request): Promise<Response> {
   return (await chrome.runtime.sendMessage(req)) as Response;
+}
+
+/**
+ * Ask the worker to forget what it recorded about a key (it owns every write
+ * to the statuses; see shared/key-status.ts). Retried once, because the worker
+ * may still be starting, and a clear lost silently leaves a replaced or
+ * re-tested key marked unusable. Never throws: callers are input handlers.
+ */
+async function clearKeyStatus(id: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if ((await send({ t: 'CLEAR_KEY_STATUS', id })).ok) return true;
+    } catch {
+      /* worker not up yet; retried below */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  console.warn('[mt:options] could not clear the recorded status of key', id);
+  return false;
 }
 
 render(<Options />, document.getElementById('app')!);

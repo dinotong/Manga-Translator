@@ -1,3 +1,4 @@
+import { serialQueue } from '../core/serial';
 import type { LangCode } from '../types';
 import type { SourceLang } from './lang';
 
@@ -73,13 +74,7 @@ export async function loadSetRecord(setKey: string): Promise<SetRecord | undefin
  * operation; the one-off legacy migration goes through the same chain when it
  * runs there.
  */
-let chain: Promise<unknown> = Promise.resolve();
-
-function serially<T>(task: () => Promise<T>): Promise<T> {
-  const next = chain.then(task, task);
-  chain = next.catch(() => undefined);
-  return next;
-}
+const serially = serialQueue();
 
 /**
  * Read-modify-write of one set, against fresh state.
