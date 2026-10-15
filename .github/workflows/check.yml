@@ -1,0 +1,52 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Actions are pinned to full commit SHAs (a tag can be moved); Dependabot's
+# github-actions entry keeps the SHAs and the version comments current.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      - run: npm ci
+      - run: npm run check
+
+  # The spike harness re-exports extension/src/core, so a change there can
+  # break it while the extension's own check stays green.
+  spike:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spike
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            spike/package-lock.json
+            extension/package-lock.json
+      # The extension's tests run from here extend extension/.wxt/tsconfig.json,
+      # which only exists after the extension's own install (wxt prepare).
+      - run: npm ci
+        working-directory: extension
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

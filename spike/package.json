@@ -1,0 +1,25 @@
+{
+  "name": "manga-translator-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M0 benchmark harness. Not the extension — decides whether browser OCR is fast enough.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "models": "node scripts/download-models.mjs",
+    "samples": "node fetch-samples.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "onnxruntime-web": "^1.27.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,60 @@
+name: แจ้งปัญหา / Bug report
+description: แปลไม่ขึ้น แปลผิด กล่องทับ หรือ extension ทำงานผิดปกติ
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ขอบคุณที่ช่วยแจ้งครับ 🙏
+        **เรื่องช่องโหว่ความปลอดภัย อย่าแจ้งที่นี่** — ใช้ [Report a vulnerability](https://github.com/dinotong/Manga-Translator/security/advisories/new) แทน
+        **ห้ามแปะ API key** ในช่องไหนเลย
+  - type: input
+    id: version
+    attributes:
+      label: เวอร์ชัน extension
+      description: ดูได้ที่ chrome://extensions หรือหน้า Options
+      placeholder: "1.0.2"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: เบราว์เซอร์และเวอร์ชัน
+      description: เปิด chrome://version แล้วคัดบรรทัดแรก
+      placeholder: "Chrome 141.0.7390.66 / Edge 141 / ..."
+    validations:
+      required: true
+  - type: input
+    id: site
+    attributes:
+      label: เว็บที่ใช้อ่าน
+      description: ชื่อเว็บหรือโดเมน (ไม่สะดวกใส่ลิงก์ตอนก็ไม่เป็นไร)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: เกิดอะไรขึ้น และคาดว่าควรเป็นอย่างไร
+      description: ถ้ามีภาพหน้าจอ ลากมาวางได้เลย
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: ขั้นตอนที่ทำให้เกิดปัญหา
+      placeholder: |
+        1. เปิดหน้า ...
+        2. กด ...
+        3. เห็น ...
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: ผลจากหน้า Diagnostics
+      description: หน้า Options → Diagnostics → กดตรวจ แล้วคัดผลมาวาง (key ถูกปิดบังให้อัตโนมัติ แต่ช่วยดูอีกรอบ)
+      render: text
+  - type: textarea
+    id: console
+    attributes:
+      label: ข้อความใน console (ถ้ามี)
+      description: "กด F12 → Console แล้วคัดบรรทัดที่ขึ้นต้นด้วย [mt:"
+      render: text
