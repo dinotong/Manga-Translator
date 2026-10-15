@@ -19,6 +19,11 @@
 - #39: MangaDex เปลี่ยนหน้า SPA 6 ครั้ง content script เริ่มครั้งเดียว ได้ log `navigated to …` ครบทุกครั้ง รวม `/title/…` → `/chapter/…`
 - #36: สองแท็บตอนเดียวกันสั่งแปลพร้อมกัน → รูป hash เดียวกัน 2 งานจบทั้งคู่ห่างกัน 3 วิ · error 0 ทั้งสองแท็บ
 - รอบ self-review (`c6a4183`): แปล MangaDex 1 หน้า 3 กล่องใน 4 วิ (ทาง detect-page ใหม่) · ทดสอบ key 1 → "ใช้ได้ ✓" 6.6 วิ สถานะ "กำลังใช้" · warning/error 0 ทั้งหน้าเว็บและหน้าตั้งค่า
+- Copilot review บน PR #45 (snapshot `c6a4183`) → แก้ 5/5 บน main `6940c3e` · ลองบน Chrome:
+  - MangaDex ทาง content script: แปล 4 กล่อง 10 วิ
+  - ยกเลิกกลางงาน (สั่งแปลแล้วปิดสวิตช์ "เปิดใช้งาน" 150 ms ต่อมา คืนค่าใน finally): warning/error ของเรา 0 · สั่งแปลซ้ำได้ 3 กล่อง 7 วิ = คิวไม่ค้าง
+  - รูปข้าม origin ทาง SW fetch (Wikipedia, thumb.wikimedia.org 250×333): 1 กล่อง 7 วิ
+  - ยังไม่ได้จำลอง CDN ค้างจนชนเพดาน 60 วิ (ไม่มีเว็บทดสอบที่ทำแบบนั้นได้)
 
 HetCreep เปิดเพิ่ม 19 issue (#26–#44) จากรีวิวบอทบน PR snapshot `5375ea7` · **ตรวจกับโค้ดแล้วจริงทั้ง 19 ใบ ไม่มีข้อไหนร้ายแรง** · ติด label + milestone `1.0.4` แล้ว
 ตัวเลขรวม: bug 12 · documentation 5 · infra 2 (มี security 1 ใบ) · good first issue 4 (#37 #41 #42 #43) — บางใบมีหลาย label
