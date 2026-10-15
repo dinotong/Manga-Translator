@@ -3,6 +3,8 @@
 > อัปเดต 2026-08-16 · **ทำจากบนลงล่าง** · ติ๊ก `[x]` เมื่อเสร็จ
 > เป้าหมายที่เจ้าของโปรเจกต์ยืนยัน: **เอา extension ไปอ่านมังงะได้จริง**
 
+> 🔜 **1.0.5 (ยังไม่ออก):** นโยบายดึงรูปของ SW ตาม D-047 (`4f19426`) — cookie เฉพาะ site เดียวกับหน้า · ไม่เข้า LAN/loopback จากหน้าสาธารณะ · redirect ไม่พา cookie · เพดาน 50 MB · extension 699/699 · Chrome: MangaDex + รูปข้าม site ผ่าน · **ยังไม่ได้วัดเว็บที่ต้อง login** (Edge `D:\mt-profile`) ก่อนออก 1.0.5 ต้องวัด
+>
 > ✅ **[Release v1.0.4](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.4) ขึ้นแล้ว 2026-10-15** (Pre-release · ZIP 11,245,526 bytes · SHA-256 `1964f3c6…ba1fe4` · tag ชี้ไป `d07b609`) · issue #26–#44 ครบ + self-review + Copilot review (PR #45) · **ยังไม่ส่ง store** — รอผลรีวิว 1.0.3 ก่อน (อัปโหลดตอนนี้ต้องยกเลิกรีวิวที่ค้าง) · ผ่านแล้วส่ง 1.0.4 ตามทันที เพราะ #38 (หน้าตั้งค่าเด้งทุก `onInstalled`) กัดผู้ใช้ store ทุกครั้งที่ Chrome อัปเดตตัวเอง
 >
 > ✅ **[Release v1.0.3](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.3) ขึ้นแล้ว 2026-10-14** (Pre-release · ZIP 11,244,836 bytes · SHA-256 `e493764a…b86306` · tag ชี้ไป `4aafb8d`) · ✅ **ส่งรีวิว Chrome Web Store แล้ว 2026-10-14** (1.0.3 · หมวด เครื่องมือ · สาธารณะ · ทุกภูมิภาค) — ผลส่งไปที่อีเมลบัญชี store
