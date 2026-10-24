@@ -3,6 +3,10 @@
 > อัปเดต 2026-08-16 · **ทำจากบนลงล่าง** · ติ๊ก `[x]` เมื่อเสร็จ
 > เป้าหมายที่เจ้าของโปรเจกต์ยืนยัน: **เอา extension ไปอ่านมังงะได้จริง**
 
+> 🏪 **หน้าร้าน:** https://chromewebstore.google.com/detail/manga-translator/kboclaebmmclkllncpbignknakobafch (ID `kboclaebmmclkllncpbignknakobafch`) · หน้าจัดการ: https://chrome.google.com/webstore/devconsole
+>
+> ✅ **[Release v1.0.6](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.6) ขึ้นแล้ว 2026-10-24** (Pre-release · ZIP 11,247,092 bytes · SHA-256 `120006cf…b9e8a63` · tag ชี้ไป `7364284`) · hitomi: CDN รูปเสิร์ฟเฉพาะ Referer ของเว็บตัวเอง → profile `content-script` (`c36f719`) · พิสูจน์บน Chrome: 1 หน้า 8 กล่อง 8 วิ · Vite 8.3.4 (#46 #47) · extension 704/704 · **ข้ามรีวิว snapshot PR + Copilot รอบนี้** (diff เล็ก ~60 บรรทัด) · ยังไม่ส่ง store
+>
 > 🏪 **Chrome Web Store (2026-10-16):** 1.0.3 รีวิวผ่าน · **ส่ง 1.0.5 เข้ารีวิวแล้ว 2026-10-16** (ข้าม 1.0.4 · ZIP `manga-translator-extension-1.0.5-chrome.zip` SHA-256 ตรงกับ release · สิทธิ์ใน manifest เท่า 1.0.3 จึงไม่มีคำเตือนสิทธิ์ใหม่ให้ผู้ใช้) — ผลไปที่อีเมลบัญชี store · ผ่านแล้วผู้ใช้ store ได้อัปเดตอัตโนมัติ
 >
 > ✅ **[Release v1.0.5](https://github.com/dinotong/Manga-Translator/releases/tag/v1.0.5) ขึ้นแล้ว 2026-10-15** (Pre-release · ZIP 11,246,819 bytes · SHA-256 `9ce12a92…21ab6e3` · tag ชี้ไป `8d7d571`) · นโยบายดึงรูปตาม D-047 · extension 699/699 · Chrome: เว็บ login ที่รองรับทั้ง 2 เว็บผ่าน (รูปข้าม site ไม่ต้องใช้ cookie · รูป site เดียวกันได้ cookie) · ✅ **ส่ง store แทน 1.0.4 แล้ว 2026-10-16** · advisory 2 ฉบับ ([GHSA-p4jj-62r9-9fgp](https://github.com/dinotong/Manga-Translator/security/advisories/GHSA-p4jj-62r9-9fgp) · [GHSA-329x-gf77-3frx](https://github.com/dinotong/Manga-Translator/security/advisories/GHSA-329x-gf77-3frx)) ตอบผู้รายงานแล้ว + publish 2026-10-15 · affected `<= 1.0.4` patched `1.0.5` · เครดิต HetCreep

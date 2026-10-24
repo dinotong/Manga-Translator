@@ -7,6 +7,8 @@
 
 > ภาพนี้คือหน้าตัวอย่างที่วาดขึ้นสำหรับโปรเจกต์นี้ ([extension/store-assets/](extension/store-assets/)) ไม่ใช่มังงะของใคร
 
+**ติดตั้ง:** [Chrome Web Store](https://chromewebstore.google.com/detail/manga-translator/kboclaebmmclkllncpbignknakobafch) (อัปเดตตัวเอง) · หรือ zip จาก Releases
+
 **รุ่นล่าสุด:** [v1.0.6 (เบต้า)](https://github.com/dinotong/Manga-Translator/releases/latest) · ใช้ได้กับ Chrome · Edge · Brave (116 ขึ้นไป) · ฟรีและโอเพนซอร์ส (Apache-2.0)
 
 ---
@@ -27,7 +29,9 @@
 
 ## ติดตั้ง
 
-> ตอนนี้ยังเป็นรุ่นเบต้า ติดตั้งจากไฟล์ zip และ**ยังไม่อัปเดตตัวเอง** — กำลังเตรียมขึ้น Chrome Web Store
+> **ทางง่ายสุด:** ติดตั้งจาก [Chrome Web Store](https://chromewebstore.google.com/detail/manga-translator/kboclaebmmclkllncpbignknakobafch) แล้วข้ามไปข้อ 3 — อัปเดตตัวเองอัตโนมัติ ใช้ได้กับ Chrome · Edge · Brave
+>
+> ข้อ 1–2 ด้านล่างสำหรับคนที่อยากติดตั้งจากไฟล์ zip เอง (รุ่น zip ไม่อัปเดตตัวเอง)
 
 ### 1. โหลดและแตกไฟล์
 
@@ -84,7 +88,7 @@
 | ขึ้นว่า "ฝั่ง Gemini แน่นอยู่" | Google มีคนใช้เยอะในช่วงนั้น ไม่ใช่โควตาคุณหมด — รอสักครู่แล้วแปลใหม่ |
 | ขึ้นว่าโควตาหมด | key ฟรีรีเซ็ตทุกวัน · เพิ่ม key สำรองในหน้า Options ได้ |
 | ไม่แปลเลย | หน้า Options → **ตรวจสอบระบบ** กดปุ่มเดียว เช็คทุกส่วนพร้อมบอกวิธีแก้ |
-| หา Developer mode ไม่เจอ / เปิดไม่ได้ | เครื่องที่ถูกองค์กรล็อกไว้จะเปิดไม่ได้ ลองเบราว์เซอร์อื่น หรือรอรุ่นใน Chrome Web Store |
+| หา Developer mode ไม่เจอ / เปิดไม่ได้ | เครื่องที่ถูกองค์กรล็อกไว้จะเปิดไม่ได้ ติดตั้งจาก [Chrome Web Store](https://chromewebstore.google.com/detail/manga-translator/kboclaebmmclkllncpbignknakobafch) แทน ไม่ต้องใช้ Developer mode |
 | อย่างอื่น | เปิด [Issue](https://github.com/dinotong/Manga-Translator/issues) แล้วกด **คัดลอกผล Diagnostics** ในหน้า Options วางแนบมาด้วย (API key ในผลนั้นถูกปิดไว้ เหลือแค่ 4 ตัวท้าย) |
 
 ---
@@ -100,7 +104,7 @@
 
 ## ข้อจำกัดที่รู้อยู่
 
-- **ยังไม่อัปเดตตัวเอง** จนกว่าจะขึ้น Chrome Web Store
+- **รุ่น zip ไม่อัปเดตตัวเอง** — รุ่นจาก Chrome Web Store อัปเดตเอง (ร้านอาจช้ากว่า GitHub ระหว่างรอรีวิว)
 - **ความเร็วขึ้นกับ Google** — ปกติ 3–50 วินาทีต่อคำขอ ช่วงคนใช้เยอะอาจช้ากว่านั้น ถ้าเกิน 90 วินาทีจะบอกให้ลองใหม่
 - **คุณภาพคำแปลขึ้นกับ Gemini** — ยังไม่มีเครื่องมือวัดคุณภาพคำแปล เจอคำแปลแปลกๆ แจ้งใน Issues ได้
 - **เว็บที่วาดรูปลง canvas** (เช่น Giga Viewer ของ Shonen Jump+) ยังไม่รองรับ
