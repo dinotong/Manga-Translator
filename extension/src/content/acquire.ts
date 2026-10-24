@@ -21,7 +21,11 @@ import type { SiteProfile } from './site-profiles';
  *     worker's host_permissions are the only way through. imhentai is entirely
  *     this case.
  *
- * Both were confirmed against the live sites, not inferred.
+ * One exception to the second: a CDN that answers CORS but serves only when
+ * the Referer is its own site. The worker cannot send that Referer, so a
+ * profile routes it here with 'content-script' — see hitomi in site-profiles.
+ *
+ * All three were confirmed against the live sites, not inferred.
  */
 
 export type Acquired =
@@ -70,7 +74,11 @@ export async function acquire(
 async function readHere(url: string, img: HTMLImageElement, signal?: AbortSignal): Promise<ImageRef> {
   const limit = deadline(IMAGE_FETCH_TIMEOUT_MS, signal);
   try {
-    const res = await fetch(url, { credentials: 'include', signal: limit.signal });
+    // Cookies only to the page's own origin. A cross-origin CDN that is read
+    // from here does so through CORS, and the usual answer is
+    // `Access-Control-Allow-Origin: *` — which the browser refuses for a
+    // credentialed request. The page's <img> sent none to it either (D-047).
+    const res = await fetch(url, { credentials: 'same-origin', signal: limit.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status} reading ${url.slice(0, 60)}`);
     if (declaredTooLarge(res.headers.get('content-length'))) {
       await res.body?.cancel().catch(() => undefined);

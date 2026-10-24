@@ -6,6 +6,39 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('acquire through the page from a cross-origin CDN', () => {
+  const hitomiPage = 'https://hitomi.la/reader/4277510.html#1';
+  const cdnImage = {
+    currentSrc: 'https://w1.gold-usergeneratedcontent.net/1792828802/2604/d5f3.webp',
+    src: '',
+    naturalWidth: 900,
+    naturalHeight: 1280,
+  } as HTMLImageElement;
+
+  it('reads the bytes here, without cookies, so CORS with `*` lets them through', async () => {
+    vi.stubGlobal('location', new URL(hitomiPage));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(Uint8Array.of(1, 2, 3)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await acquire(cdnImage, profileFor(new URL(hitomiPage)));
+
+    expect(result).toMatchObject({ kind: 'bytes', ref: { bytes: 3, inlineBase64: 'AQID' } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      cdnImage.currentSrc,
+      expect.objectContaining({ credentials: 'same-origin' }),
+    );
+  });
+
+  it('still hands the URL to the worker when the page cannot read it', async () => {
+    vi.stubGlobal('location', new URL(hitomiPage));
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const result = await acquire(cdnImage, profileFor(new URL(hitomiPage)));
+
+    expect(result).toEqual({ kind: 'url', url: cdnImage.currentSrc, natural: { w: 900, h: 1280 } });
+  });
+});
+
 describe('acquire blob images', () => {
   it('falls back to the decoded image when the blob URL is no longer fetchable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));

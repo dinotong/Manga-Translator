@@ -458,6 +458,42 @@ const nhentai: SiteProfile = {
   },
 };
 
+/**
+ * hitomi.
+ *
+ * Measured against the image CDN on 2026-10-24 (w1.gold-usergeneratedcontent.net,
+ * a .webp page): with `Referer: https://hitomi.la/` it serves 200 image/webp;
+ * with no Referer, or a chrome-extension:// one, it serves a 404 HTML page. The
+ * service worker cannot send the reader's Referer — a fetch() `referrer` from
+ * another origin is dropped — so the worker path can never work here.
+ *
+ * The same response carries `Access-Control-Allow-Origin: *`, so a fetch from
+ * the content script passes CORS and goes out with the reader page as its
+ * Referer. Hence 'content-script' on a cross-origin CDN, the one site where
+ * that is the right answer.
+ *
+ * Markup read from the reader's own scripts: pages are `<img>`s appended to
+ * `#comicImages` (the next and previous pages sit in `#preload`/`#postload`,
+ * which the selector leaves out), and the page is the URL hash — `#7`, or
+ * `#7-8` in two-page spread mode.
+ */
+const hitomi: SiteProfile = {
+  id: 'hitomi',
+  match: (u) => /(^|\.)hitomi\.la$/.test(u.hostname),
+  seedHosts: ['hitomi.la'],
+  pageSelector: '#comicImages img',
+  acquire: 'content-script',
+  reader: 'paged',
+  // `/reader/{id}.html` is the reader; `/doujinshi/…-{id}.html` and its kin
+  // are the gallery's cover-and-thumbnails page, and `/` is the index.
+  isReaderPage: (u) => /^\/reader\/\d+\.html$/.test(u.pathname),
+  setKey: (u) => u.pathname.match(/^\/reader\/(\d+)\.html$/)?.[1] ?? null,
+  pageNumber: (u) => {
+    const n = u.hash.match(/^#(\d+)(?:-\d*)?$/)?.[1];
+    return n ? Number(n) : null;
+  },
+};
+
 /** Anything else: heuristic scoring in scan.ts decides what is a manga page. */
 export const DEFAULT_PROFILE: SiteProfile = {
   id: 'default',
@@ -466,7 +502,7 @@ export const DEFAULT_PROFILE: SiteProfile = {
   reader: 'auto',
 };
 
-const REGISTRY: readonly SiteProfile[] = [mangadex, mangaplus, imhentai, luscious, ehentai, nhentai];
+const REGISTRY: readonly SiteProfile[] = [mangadex, mangaplus, imhentai, luscious, ehentai, nhentai, hitomi];
 
 export function profileFor(url: URL): SiteProfile {
   return REGISTRY.find((p) => p.match(url)) ?? DEFAULT_PROFILE;

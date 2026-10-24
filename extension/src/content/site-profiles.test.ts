@@ -317,6 +317,27 @@ describe('isReaderPage — nhentai', () => {
   });
 });
 
+describe('hitomi', () => {
+  it('/reader/{id}.html is the reader; gallery pages and the index are not', () => {
+    expect(kind('https://hitomi.la/reader/4277510.html')).toBe(true);
+    expect(kind('https://hitomi.la/reader/4277510.html#7')).toBe(true);
+    expect(kind('https://hitomi.la/doujinshi/some-title-4277510.html')).toBe(false);
+    expect(kind('https://hitomi.la/')).toBe(false);
+  });
+
+  it('reads the gallery from the path and the page from the hash', () => {
+    expect(setOf('https://hitomi.la/reader/4277510.html#7')).toBe('4277510');
+    expect(pageOf('https://hitomi.la/reader/4277510.html#7')).toBe(7);
+    // Two-page spread mode puts the pair in the hash; the left page counts.
+    expect(pageOf('https://hitomi.la/reader/4277510.html#7-8')).toBe(7);
+    expect(pageOf('https://hitomi.la/reader/4277510.html')).toBe(null);
+  });
+
+  it('reads images from the page, where the Referer the CDN insists on goes along', () => {
+    expect(at('https://hitomi.la/reader/4277510.html').acquire).toBe('content-script');
+  });
+});
+
 describe('isReaderPage — unknown sites', () => {
   it('has no answer, so core/page-kind.ts decides from the layout', () => {
     expect(kind('https://www.mangaread.org/manga/swordmasters-youngest-son/chapter-207/')).toBe(
