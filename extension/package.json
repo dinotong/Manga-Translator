@@ -17,13 +17,13 @@
   },
   "dependencies": {
     "idb": "^8.0.4",
-    "onnxruntime-web": "^1.30.0",
+    "onnxruntime-web": "^1.31.1",
     "preact": "^10.29.8"
   },
   "devDependencies": {
-    "@types/chrome": "^0.3.5",
+    "@types/chrome": "^0.3.7",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "wxt": "^0.21.4"
+    "wxt": "^0.21.5"
   }
 }
